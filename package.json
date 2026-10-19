@@ -1,0 +1,13 @@
+{
+  "name": "tigard-flasher-ui-tests",
+  "version": "0.4.0",
+  "private": true,
+  "license": "MIT",
+  "description": "Browser development tests; not required to run Tigard Flasher",
+  "engines": {"node": ">=22.12.0"},
+  "scripts": {
+    "test": "node tests/test_wiring.cjs",
+    "test:ui": "node tests/ui_wiring.cjs && node tests/ui_scroll.cjs"
+  },
+  "devDependencies": {"puppeteer": "25.14.0"}
+}

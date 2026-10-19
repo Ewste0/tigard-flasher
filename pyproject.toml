@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "spc5tool"
+dynamic = ["version"]
+description = "Experimental live Tigard SPC/MPC JTAG and SPI flasher with a local UI"
+readme = "README.md"
+license = "MIT AND CC-BY-SA-4.0"
+license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md", "spc5tool/webui/assets/TIGARD-LICENSE.txt"]
+authors = [{name = "Tigard Flasher contributors"}]
+requires-python = ">=3.10"
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Programming Language :: Python :: 3",
+    "Topic :: System :: Hardware",
+]
+dependencies = [
+    "pyftdi>=0.55,<1",
+]
+
+[project.scripts]
+spc5tool = "spc5tool.cli:main"
+
+[tool.setuptools]
+packages = ["spc5tool"]
+include-package-data = false
+
+[tool.setuptools.dynamic]
+version = {attr = "spc5tool.__version__"}
+
+[tool.setuptools.package-data]
+spc5tool = ["webui/*.html", "webui/*.css", "webui/*.js", "webui/assets/*.png", "webui/assets/*.svg", "webui/assets/*.txt"]

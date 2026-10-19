@@ -1,0 +1,60 @@
+# Validation and scope
+
+## Hardware bench record — 2026-10-19
+
+Host: macOS, Python 3.13, Tigard v1.1. Target: one MPC5748G board,
+IDCODE `0x0988101D`. Wiring: TRST to RESET, SRST to JCOMP.
+
+- IDCODE and reset/halt attach succeeded. Core 0 halted; cores 1/2 were held in
+  reset with their module clocks inactive. This is one observed boot configuration.
+- Two 256-byte reads at `0x01000000` agreed; a later 16 KiB read began with the same bytes.
+- Two 32 KiB configuration reads at `0x00FA8000` agreed.
+- A requested one-byte change at the start of that configuration range was tested.
+  Both 16 KiB blocks were backed up before erase. The first block was erased and
+  reconstructed, preserving the remaining bytes; the complete image was verified.
+- A fresh connection and a separate 32 KiB read matched the input image byte for byte.
+  Original-block backup content matched the pre-write read.
+- At 1 MHz, the write took approximately 154 seconds; a 32 KiB read took 26 seconds.
+
+Private dumps, test input, backup ZIPs, identifiers, and raw session logs are
+intentionally excluded from this public repository. These are maintainer-reported
+bench observations, not independently reproducible public firmware fixtures.
+Firmware execution and boot behavior after the test were not evaluated.
+
+The full main-array read was canceled. Full-array writing, other configuration
+blocks, other MPC5748 boards, SPC560B64, SPC58NH92, and SPI remain unvalidated on
+hardware. The CLI's `hardware_validated: false` means the entire profile is not
+qualified; it does not discard the limited MPC5748 bench observations above.
+
+## Offline verification
+
+The unit suite covers TAP/MPSSE sequencing, OnCE/Nexus memory access, controller
+geometry, timeouts, mismatched IDs, preservation across erase blocks, backup
+failures, verification failures, persistent simulation, and server API restrictions.
+SPC58NH92 mutation denial is checked at API/CLI/flash layers. Browser tests cover
+both reset mappings, 14-pin and 10-pin connectors, SPI wiring, named saves,
+read presets, hardware-mode presentation with a mocked adapter descriptor, and
+continuous scrolling through a synthetic 16 MiB image.
+
+CI contains Python 3.10/3.13 jobs on Linux, macOS, and Windows, plus Linux browser
+tests and distribution checks. A configured workflow is not a claim that these
+hosted jobs have already run; check the repository's Actions results after push.
+Local verification details are in [RELEASE_CHECKS.md](RELEASE_CHECKS.md).
+Device models are confined to tests and excluded from the installed application.
+The live CLI/API reject simulation requests, and missing hardware must fail
+without generating a dump. No automated test intentionally programs physical hardware.
+
+## Technical references
+
+- [Tigard hardware, pin labels and FT2232H channel selection](https://github.com/tigard-tools/tigard).
+- [NXP AN4224](https://www.nxp.com/docs/en/application-note/AN4224.pdf), JTAG/JCOMP design guidance.
+- [ST automotive OpenOCD branch](https://github.com/STMicroelectronics/OpenOCD/tree/openocd-automotive-mcu-r1),
+  `tcl/target/spc58xh.cfg`, `tcl/target/spc58.cfg`, and `src/target/powerpc.c`:
+  SPC58 IDCODE `0x01146041`, six-bit IR, boot core selector, Nexus attributes,
+  watchdog address, and DFLASH window. Referenced to cross-check parameters;
+  no OpenOCD source or proprietary loader is bundled.
+
+The MPC5748 configuration window and SPC58NH DFLASH window were also checked
+against user-provided programming profiles. Those private profiles are not
+distributed. Each supported window is bounded in code; it is not a general
+read-any-address or security-bypass interface.

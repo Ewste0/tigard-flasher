@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light"><title>Tigard Flasher</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Crect width='40' height='40' rx='10' fill='%233d5fd3'/%3E%3Cpath d='M10 12h20v5h-7v13h-6V17h-7z' fill='white'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/style.css"><script src="/wiring.js" defer></script><script src="/app.js" defer></script>
+</head>
+<body>
+  <header class="titlebar">
+    <div class="brand"><span class="brand-mark">T</span><div>Tigard <strong>Flasher</strong><span class="version">LOCAL / 0.4</span></div></div>
+    <div class="title-right"><span class="mode-pill live" id="modeBadge"><i></i> Tigard hardware</span><button id="settingsButton" class="title-button" data-icon="settings">Settings</button></div>
+  </header>
+  <nav class="file-toolbar" aria-label="File tools">
+    <button id="openButton" data-icon="folder">Open binary<span class="keyhint">⌘ O</span></button>
+    <button id="saveButton" data-icon="save" disabled>Save dump</button>
+    <button id="identifyButton" data-icon="scan">Identify target</button>
+    <span class="toolbar-spacer"></span><button id="logButton" data-icon="terminal" aria-expanded="true">Session log</button>
+    <input type="file" id="fileInput" accept=".bin,.rom,.img,.dump,application/octet-stream" hidden>
+  </nav>
+  <div class="operation-toolbar" aria-label="Flash operations">
+    <span class="toolbar-label">FLASH TOOLS</span>
+    <button data-operation="read" data-icon="download">Read</button>
+    <button data-operation="write" data-icon="upload" class="primary" disabled>Write</button>
+    <button data-operation="verify" data-icon="check" disabled>Verify</button>
+    <span class="divider"></span><button data-operation="erase" data-icon="eraser">Erase</button>
+    <button data-operation="blank" data-icon="square">Blank check</button>
+    <span class="toolbar-spacer"></span><span class="auto-verify" data-icon="shield">Automatic backup &amp; verification</span>
+  </div>
+  <main>
+    <aside class="sidebar">
+      <section class="panel target-panel">
+        <div class="section-heading"><h2>Target device</h2><span class="tiny-badge" id="protocolBadge">JTAG</span></div>
+        <label for="familySelect">Family</label><select id="familySelect"><option value="jtag">SPC / MPC · Power Architecture</option><option value="spi">SPI NOR · Winbond</option></select>
+        <label for="chipSelect">Microcontroller</label><select id="chipSelect"></select>
+        <div class="target-description"><span class="chip-icon" data-icon="chip"></span><div><strong id="targetAlias">MPC5607B</strong><small id="targetCore">e200z0h · VLE</small></div></div>
+      </section>
+      <section class="panel region-panel">
+        <div class="section-heading"><h2>Memory regions</h2><span class="subtle" id="regionCount">02</span></div>
+        <div id="regionList" role="radiogroup" aria-label="Memory region"></div>
+        <div class="excluded" data-icon="lock">Security and OTP areas excluded</div>
+      </section>
+      <button id="wiringButton" class="wiring-button" data-icon="cable">Connection guide<span>↗</span></button>
+      <section class="panel connection-panel">
+        <div class="section-heading"><h2>Connection</h2><span class="status-dot"></span></div>
+        <div class="adapter-row"><div class="adapter-icon" data-icon="usb"></div><div><strong>Tigard</strong><small>FT2232H · Channel B</small></div></div>
+        <dl><div><dt>Adapter</dt><dd id="adapterState">Checking USB</dd></div><div><dt>Target</dt><dd id="targetState">Not identified</dd></div><div><dt>Clock</dt><dd id="clockValue">500 kHz</dd></div></dl>
+        <div class="connection-note" id="connectionNote">USB is disabled in this session.<br>Work with a persistent virtual chip.</div>
+      </section>
+      <div class="sidebar-foot"><span data-icon="shield"></span><span>Local workspace<br><strong>Your files stay on this computer.</strong></span></div>
+    </aside>
+    <div class="workspace">
+      <section class="panel buffer-panel">
+        <div class="workspace-heading"><div><span class="eyebrow">FLASH WORKSPACE</span><h1 id="workspaceTitle">Binary buffer</h1></div><div class="view-tabs" role="tablist" aria-label="Workspace view"><button id="bufferTab" role="tab" aria-selected="true" aria-controls="bufferView">Buffer</button><button id="mapTab" role="tab" aria-selected="false" aria-controls="mapView">Memory map</button><button id="wiringTab" role="tab" aria-selected="false" aria-controls="wiringView">Wiring</button></div></div>
+        <div class="read-options"><div><label for="readScope">Read selection</label><select id="readScope"><option value="custom">Custom range</option></select></div><div class="save-name"><label for="saveName">Save filename</label><input id="saveName" maxlength="100" placeholder="My_dump.bin" spellcheck="false"></div><span id="profileNote"></span></div>
+        <div class="range-bar"><div><label for="addressInput">START ADDRESS</label><input id="addressInput" value="0x00000000" spellcheck="false"></div><span class="range-arrow">→</span><div><label for="lengthInput">READ / ERASE LENGTH</label><input id="lengthInput" value="0x8000" spellcheck="false"></div><button id="regionRange" data-icon="expand">Use region</button><span id="rangeHint">32 KiB selected</span></div>
+        <div id="bufferView" role="tabpanel" aria-labelledby="bufferTab">
+          <div class="image-info"><span class="file-symbol" data-icon="file"></span><div class="image-name"><strong id="fileName">No binary loaded</strong><span id="fileDetails">Open a binary file or read from the connected target.</span></div><span class="image-tag" id="fileTag">EMPTY BUFFER</span></div>
+          <div class="hex-header"><span>OFFSET</span><span>00 01 02 03 04 05 06 07 08 09 0A 0B 0C 0D 0E 0F</span><span>ASCII</span></div>
+          <div id="dropZone" class="buffer-body"><div id="emptyBuffer" class="empty-buffer"><div class="empty-icon" data-icon="file"></div><h3>Your next flash starts here.</h3><p>Drop a raw binary into the buffer.<br>Or read flash from the connected target.</p><div><button id="emptyOpen" class="primary" data-icon="folder">Open binary</button></div><small>.bin · .rom · .img · up to 16 MiB</small></div><div id="hexScroll" tabindex="0" role="region" aria-label="Scrollable hex and ASCII dump" hidden><div id="hexCanvas"><pre id="hexRows" aria-label="Binary hex preview"></pre></div></div></div>
+          <div class="buffer-footer"><span id="bufferPosition">0 bytes in buffer</span><form id="jumpForm" class="offset-controls"><label for="jumpOffset">Go to offset</label><input id="jumpOffset" placeholder="0x00000000" aria-label="File offset, decimal or hexadecimal" spellcheck="false"><button id="jumpButton" type="submit" disabled>Go</button></form><span class="read-only" data-icon="lock">Read-only preview</span></div>
+          <div class="checksum"><span>SHA-256</span><code id="checksumValue">Load an image to calculate its checksum</code></div>
+        </div>
+        <div id="mapView" role="tabpanel" aria-labelledby="mapTab" hidden><div class="view-intro"><h3>Flash block layout</h3><p>Select a block to use its exact erase range.</p></div><div id="blockGrid"></div></div>
+        <div id="wiringView" role="tabpanel" aria-labelledby="wiringTab" hidden>
+          <div class="view-intro wiring-intro"><div><h3>Tigard → target</h3><p id="wiringIntro"></p></div><span id="wiringConfig" class="wiring-config"></span></div>
+          <div class="wiring-layout">
+            <section class="wiring-card"><div class="wiring-card-title"><span class="step-number">1</span><div><h4>Tigard adapter</h4><p id="adapterHeaderTitle">JTAG header · channel B</p></div></div>
+              <div id="adapterVisual" class="adapter-visual"><a class="tigard-photo" href="/assets/tigard-render.png" target="_blank" rel="noopener" aria-label="Open Tigard board rendering"><img src="/assets/tigard-render.png" alt="Tigard v1.0 board rendering, USB at left and JTAG header at right"><span class="header-highlight" aria-hidden="true"></span></a><div id="adapterPins" class="adapter-pins" aria-label="Tigard header pins"></div></div>
+              <p class="photo-credit">Rendering: <a href="https://github.com/tigard-tools/tigard" target="_blank" rel="noopener">Franklin Harding / Tigard</a> · <a href="https://creativecommons.org/licenses/by-sa/4.0/" target="_blank" rel="noopener">CC BY-SA 4.0</a> · v1.0 shown. Match your board’s printed labels.</p>
+            </section>
+            <section class="wiring-card"><div class="wiring-card-title"><span class="step-number">2</span><div><h4 id="connectorTitle"></h4><p id="connectorSubtitle"></p></div></div><div id="targetConnector" class="target-connector" aria-label="Target connector pinout"></div><p id="connectorOrientation" class="connector-orientation"></p><details id="connectorReference"><summary>View connector diagram</summary><img src="/assets/jtag-14pin.svg" alt="14-pin target connector diagram with odd pins at left and even pins at right"></details></section>
+          </div>
+          <div id="selectedWire" class="selected-wire" aria-live="polite">Select a signal to highlight its connection.</div>
+          <div class="wire-table"><table><thead><tr><th>Tigard pin / signal</th><th>FTDI</th><th>Target pin / signal</th></tr></thead><tbody id="wiringRows"></tbody></table></div>
+          <div class="wiring-note" id="wiringNote"></div><p class="package-note" id="packageNote"></p>
+        </div>
+      </section>
+      <section class="panel activity-panel" id="activityPanel"><div class="section-heading"><h2><span data-icon="terminal"></span>Session log</h2><div class="log-actions"><span id="logCount">0 events</span><button id="clearLog" aria-label="Clear session log">Clear</button></div></div><div id="eventLog" role="log" aria-live="polite"><div class="log-entry"><time>READY</time><span class="log-level">INFO</span><span>Workspace initialized. No JTAG operation has been requested.</span></div></div><div id="resultActions" hidden></div></section>
+    </div>
+  </main>
+  <footer class="statusbar"><div class="status-message"><span class="ready-dot" id="jobDot"></span><strong id="statusText">Ready</strong><span id="statusDetail">Choose an image or read from the connected target</span></div><div class="progress-area"><button id="stopRead" hidden>Stop read</button><progress id="jobProgress" max="100" value="0" aria-label="Current phase progress"></progress><span id="progressText">IDLE</span></div><div class="status-target"><small>SELECTED TARGET</small><strong id="footerTarget">SPC560B64L3</strong></div></footer>
+  <div id="toast" class="toast" role="alert" hidden></div>
+  <dialog id="confirmDialog"><form method="dialog"><div class="dialog-heading"><div><span class="eyebrow" id="confirmMode">SIMULATION</span><h2 id="confirmTitle">Review write</h2></div><button class="icon-button" value="cancel" aria-label="Close operation review">×</button></div><p id="confirmText"></p><dl class="plan-details" id="planDetails"></dl><div class="plan-note" id="planNote"></div><div class="dialog-actions"><button value="cancel">Cancel</button><button id="confirmRun" value="execute" class="primary">Run write</button></div></form></dialog>
+  <dialog id="settingsDialog"><form method="dialog" id="settingsForm"><div class="dialog-heading"><div><span class="eyebrow">WORKSPACE</span><h2>Connection settings</h2></div><button value="cancel" class="icon-button" aria-label="Close settings">×</button></div><p class="field-note">Live Tigard hardware only. Identify checks the connected target; reads reset and halt the MCU.</p><label for="frequencySelect">Interface clock</label><select id="frequencySelect"><option value="100000">100 kHz</option><option value="500000" selected>500 kHz</option><option value="1000000">1 MHz</option><option value="5000000">5 MHz</option></select><label for="expectedId">Expected JTAG IDCODE</label><input id="expectedId" placeholder="Identify target first" spellcheck="false"><p class="field-note">Required for hardware MCU writes and erases. MPC5748 config-block writing has been tested; other ranges and devices remain unvalidated.</p><p class="field-note" id="settingsReset"></p><div class="settings-workspace"><span>LOCAL STORAGE</span><code id="workspacePath"></code></div><div class="dialog-actions"><button value="cancel">Cancel</button><button value="save" class="primary">Save settings</button></div></form></dialog>
+</body></html>

@@ -1,0 +1,9 @@
+include README.md LICENSE THIRD_PARTY_NOTICES.md CHANGELOG.md CONTRIBUTING.md SECURITY.md
+include launch.py *.command *.cmd package.json package-lock.json
+include .gitignore .gitattributes
+recursive-include .github *.yml
+recursive-include docs *.md *.png
+recursive-include tests *.py *.cjs
+recursive-include tools *.py
+recursive-include spc5tool/webui *.html *.css *.js *.svg *.png *.txt
+global-exclude __pycache__ *.py[cod] .DS_Store

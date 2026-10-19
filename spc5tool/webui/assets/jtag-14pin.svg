@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="438" viewBox="0 0 640 438" role="img" aria-label="14-pin JTAG connector">
+<rect width="640" height="100%" rx="14" fill="#f6f8fc"/>
+<text x="320" y="35" text-anchor="middle" font-family="sans-serif" font-size="21" fill="#263b70">14-pin JTAG connector</text>
+<circle cx="270" cy="82" r="15" fill="white" stroke="#4664d8" stroke-width="2"/>
+<text x="270" y="87" text-anchor="middle" font-family="monospace" font-size="14" fill="#263b70">1</text>
+<text x="235" y="87" text-anchor="end" font-family="sans-serif" font-size="15" fill="#263b70">TDI</text>
+<circle cx="370" cy="82" r="15" fill="white" stroke="#4664d8" stroke-width="2"/>
+<text x="370" y="87" text-anchor="middle" font-family="monospace" font-size="14" fill="#263b70">2</text>
+<text x="405" y="87" text-anchor="start" font-family="sans-serif" font-size="15" fill="#263b70">GND</text>
+<circle cx="270" cy="126" r="15" fill="white" stroke="#4664d8" stroke-width="2"/>
+<text x="270" y="131" text-anchor="middle" font-family="monospace" font-size="14" fill="#263b70">3</text>
+<text x="235" y="131" text-anchor="end" font-family="sans-serif" font-size="15" fill="#263b70">TDO</text>
+<circle cx="370" cy="126" r="15" fill="white" stroke="#4664d8" stroke-width="2"/>
+<text x="370" y="131" text-anchor="middle" font-family="monospace" font-size="14" fill="#263b70">4</text>
+<text x="405" y="131" text-anchor="start" font-family="sans-serif" font-size="15" fill="#263b70">GND</text>
+<circle cx="270" cy="170" r="15" fill="white" stroke="#4664d8" stroke-width="2"/>
+<text x="270" y="175" text-anchor="middle" font-family="monospace" font-size="14" fill="#263b70">5</text>
+<text x="235" y="175" text-anchor="end" font-family="sans-serif" font-size="15" fill="#263b70">TCK</text>
+<circle cx="370" cy="170" r="15" fill="white" stroke="#4664d8" stroke-width="2"/>
+<text x="370" y="175" text-anchor="middle" font-family="monospace" font-size="14" fill="#263b70">6</text>
+<text x="405" y="175" text-anchor="start" font-family="sans-serif" font-size="15" fill="#263b70">GND</text>
+<circle cx="270" cy="214" r="15" fill="white" stroke="#4664d8" stroke-width="2"/>
+<text x="270" y="219" text-anchor="middle" font-family="monospace" font-size="14" fill="#263b70">7</text>
+<text x="235" y="219" text-anchor="end" font-family="sans-serif" font-size="15" fill="#263b70">NC</text>
+<circle cx="370" cy="214" r="15" fill="white" stroke="#4664d8" stroke-width="2"/>
+<text x="370" y="219" text-anchor="middle" font-family="monospace" font-size="14" fill="#263b70">8</text>
+<text x="405" y="219" text-anchor="start" font-family="sans-serif" font-size="15" fill="#263b70">NC</text>
+<circle cx="270" cy="258" r="15" fill="white" stroke="#4664d8" stroke-width="2"/>
+<text x="270" y="263" text-anchor="middle" font-family="monospace" font-size="14" fill="#263b70">9</text>
+<text x="235" y="263" text-anchor="end" font-family="sans-serif" font-size="15" fill="#263b70">RESET</text>
+<circle cx="370" cy="258" r="15" fill="white" stroke="#4664d8" stroke-width="2"/>
+<text x="370" y="263" text-anchor="middle" font-family="monospace" font-size="14" fill="#263b70">10</text>
+<text x="405" y="263" text-anchor="start" font-family="sans-serif" font-size="15" fill="#263b70">TMS</text>
+<circle cx="270" cy="302" r="15" fill="white" stroke="#4664d8" stroke-width="2"/>
+<text x="270" y="307" text-anchor="middle" font-family="monospace" font-size="14" fill="#263b70">11</text>
+<text x="235" y="307" text-anchor="end" font-family="sans-serif" font-size="15" fill="#263b70">VREF</text>
+<circle cx="370" cy="302" r="15" fill="white" stroke="#4664d8" stroke-width="2"/>
+<text x="370" y="307" text-anchor="middle" font-family="monospace" font-size="14" fill="#263b70">12</text>
+<text x="405" y="307" text-anchor="start" font-family="sans-serif" font-size="15" fill="#263b70">GND</text>
+<circle cx="270" cy="346" r="15" fill="white" stroke="#4664d8" stroke-width="2"/>
+<text x="270" y="351" text-anchor="middle" font-family="monospace" font-size="14" fill="#263b70">13</text>
+<text x="235" y="351" text-anchor="end" font-family="sans-serif" font-size="15" fill="#263b70">RDY / NC</text>
+<circle cx="370" cy="346" r="15" fill="white" stroke="#4664d8" stroke-width="2"/>
+<text x="370" y="351" text-anchor="middle" font-family="monospace" font-size="14" fill="#263b70">14</text>
+<text x="405" y="351" text-anchor="start" font-family="sans-serif" font-size="15" fill="#263b70">JCOMP</text>
+<text x="320" y="413" text-anchor="middle" font-family="sans-serif" font-size="13" fill="#657a99">Pin 1 upper left · verify orientation on your board</text>
+</svg>

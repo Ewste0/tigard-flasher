@@ -1,0 +1,9 @@
+Tigard v1.0 rendering (unchanged):
+https://github.com/tigard-tools/tigard/blob/master/tigard-render.png
+Copyright 2020 Franklin Harding. CC BY-SA 4.0.
+https://creativecommons.org/licenses/by-sa/4.0/
+Full license: TIGARD-LICENSE.txt
+
+jtag-14pin.svg and spc560-10pin.svg:
+Original diagrams by Tigard Flasher contributors, 2026, MIT.
+Board-specific reference connectors; verify physical numbering before use.
