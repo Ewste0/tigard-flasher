@@ -3,6 +3,7 @@ import io
 import json
 import tempfile
 import unittest
+from itertools import chain, count, repeat
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -206,12 +207,20 @@ class OnceTests(unittest.TestCase):
         self.assertEqual(sum(c.args == (0x12, 5) for c in writes.call_args_list), 3)
 
     def test_reset_primary_or_running_secondary_cannot_pass_attach(self):
-        for statuses in ([0x041], [0x209, 0x201], [0x209, 0x241]):
-            once, _ = self.make_once(SPC5748G)
-            once.timeout = 0.000000001
-            once.status = Mock(side_effect=statuses)
-            with self.assertRaisesRegex(DriverError, 'core .* did not halt'):
-                once.attach()
+        for core, statuses in ((0, [0x041]), (1, [0x209, 0x201]), (1, [0x209, 0x241])):
+            with self.subTest(core=core, status=statuses[-1]):
+                once, _ = self.make_once(SPC5748G)
+                once.timeout = 1.0
+                # The final status persists while polling, just as on a target.
+                # Control elapsed time independently of the host timer resolution.
+                once.status = Mock(side_effect=chain(statuses, repeat(statuses[-1])))
+                clock = Mock()
+                clock.monotonic.side_effect = count(0.0, 0.25)
+                with patch('spc5tool.once.time', clock):
+                    with self.assertRaisesRegex(DriverError, f'core {core} .* did not halt') as error:
+                        once.attach()
+                self.assertIsInstance(error.exception.__cause__, OperationTimeout)
+                self.assertGreater(once.status.call_count, len(statuses))
 
     def test_invalid_and_timeout_status(self):
         for status in (0, 0x3FF, 0x309, 0x289):
