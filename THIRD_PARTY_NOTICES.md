@@ -11,7 +11,7 @@ is unchanged. Wiring screenshots retain the same attribution.
 
 Original code, connector diagrams, and prose are MIT licensed. Python and npm
 dependencies are installed separately under their own licenses; their source
-is not vendored here. SKADI, Tigard, NXP, STMicroelectronics, P&E Micro, and
+is not vendored here. Tigard, NXP, STMicroelectronics, P&E Micro, and
 Winbond names identify products or compatibility targets. This project is
 independent and is not endorsed by those companies or projects.
 

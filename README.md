@@ -7,7 +7,7 @@ the source and release downloads, not a web service that accesses USB.
 
 **Hardware validation is limited to one MPC5748G board: configuration and UTEST
 config/user reads, plus one configuration-block write with a matching readback.** Other profiles
-have offline tests only. This is not a claim of complete SKADI compatibility.
+have offline tests only.
 See the [feature audit](docs/FEATURE_AUDIT.md) and [validation record](docs/VALIDATION.md).
 
 ![Live interface displaying a synthetic viewer-test file](docs/ui-live.png)
@@ -19,7 +19,7 @@ Screenshot uses generated test bytes; no firmware or connected target is shown.
 - Read, patch write, program, verify, erase, and blank check for supported flash regions.
 - OTP read, program once, verify, and blank check; SHADOW writes preserve valid configuration.
 - Family-specific password lengths, SPC560/MPC5748G password entry, and password installation.
-  C55 JTAG authentication and HSM programming remain unavailable; see [security operations](docs/SECURITY_OPERATIONS.md).
+  Protected-target C55 unlocking remains unvalidated; SPC58 JTAG login and HSM programming remain unavailable. See [security operations](docs/SECURITY_OPERATIONS.md).
 - MPC5748G **Config only** default: 32 KiB at `0x00FA8000`. Full-array and custom ranges are selectable.
 - MPC5748G UTEST presets exclude the factory ECC test area. The default UTEST
   file starts at `0x004000A0`; it is not a complete 16 KiB raw image.
@@ -142,5 +142,5 @@ and [docs/RELEASING.md](docs/RELEASING.md).
 
 Original code and connector diagrams: [MIT](LICENSE). Tigard board rendering:
 Franklin Harding, [CC BY-SA 4.0](THIRD_PARTY_NOTICES.md). Runtime dependencies are
-installed separately. This independent project includes no proprietary SKADI/P&E
+installed separately. This independent project includes no proprietary flasher
 binaries, programming loaders, or customer firmware.
