@@ -10,7 +10,7 @@ from . import chips
 from .errors import DriverError
 from .files import save_backup, write_new, sha256
 from .flash import Flash
-from .geometry import Block, blocks_for, select_blocks
+from .geometry import Block, backup_blocks, blocks_for, select_blocks
 from .idcode import read_idcode
 from .mpsse import MpsseTransport, DEFAULT_URL
 from .session import TargetSession
@@ -103,9 +103,13 @@ def _operation(args):
         unit = chips.get(args.chip).program_unit
         if args.action == "program" and (args.address % unit or size % unit):
             raise ValueError(f"MCU program requires complete aligned {unit}-byte ECC units")
+    backups = (backup_blocks(chips.get(args.chip), args.address, size)
+               if not args.spi and args.action == "program" else blocks)
     plan = {"target": args.chip, "operation": args.action, "address": f"0x{args.address:08x}",
             "bytes": size, "blocks": [{"name": b.name, "address": f"0x{b.address:08x}", "size": b.size} for b in blocks],
             "preserve_outside_image": args.action == "write", "hardware_validated": False}
+    if args.action in MUTATING:
+        plan["backup_ranges"] = [{"address": f"0x{b.address:08x}", "size": b.size} for b in backups]
     if data is not None:
         plan["sha256"] = sha256(data)
     if args.action == "plan" or (args.action in MUTATING and not args.execute):
@@ -134,7 +138,7 @@ def _operation(args):
         elif args.action == "write":
             flash.patch(args.address, data, backup)
         elif args.action in ("erase", "program"):
-            backup([(b, flash.read(b.address, b.size)) for b in blocks])
+            backup([(b, flash.read(b.address, b.size)) for b in backups])
             if args.action == "erase":
                 flash.erase(args.address, size)
             else:
@@ -163,6 +167,8 @@ def _password_operation(args):
     plan = {"target": args.chip, "operation": args.action, "slot": args.slot,
             "address": f"0x{address:08x}", "bytes": len(data), "executed": False,
             "note": "Preserves protection settings; does not activate censorship. OTP passwords cannot be replaced."}
+    plan["backup_ranges"] = [{"address": f"0x{b.address:08x}", "size": b.size}
+                             for b in backup_blocks(chip, address, len(data))]
     if not args.execute:
         emit(plan)
         return 0
@@ -246,7 +252,7 @@ def _commands(sub, spi=False):
             p.add_argument("file", help="raw binary input/output")
         if action in MUTATING:
             p.add_argument("--execute", action="store_true", help="perform operation; otherwise only print plan")
-            p.add_argument("--backup", type=Path, help="new directory for full affected-block backups and SHA-256 manifest")
+            p.add_argument("--backup", type=Path, help="new directory for affected-block backups (OTP: touched ECC units only) and SHA-256 manifest")
         p.set_defaults(func=_operation, action=action)
         if action not in MUTATING:
             p.set_defaults(execute=False, backup=None)

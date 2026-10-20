@@ -69,7 +69,9 @@ function controls() {
   for (const button of document.querySelectorAll("[data-operation]")) {
     const action = button.dataset.operation;
     const mutation = ["write", "program", "erase"].includes(action);
+    if (action === "program") button.hidden = region?.kind !== "otp";
     button.disabled = !ready || busy || (mutation && (target?.read_only || region?.writable === false)) ||
+      (action === "program" && region?.kind !== "otp") ||
       (["write", "erase"].includes(action) && region?.kind === "otp") ||
       (["write", "program", "verify"].includes(action) && !file) ||
       (action === "authenticate" && !target?.password_login) ||
@@ -138,9 +140,9 @@ function setRegion(value) {
   region = value; $("addressInput").value = hex(region.base);
   const firstBlock = target.blocks.find(b => b.address === region.base);
   $("lengthInput").value = hex(firstBlock ? firstBlock.size : target.sector);
+  const preset = target.read_presets?.find(p => p.region_default === region.name);
+  if (preset) { $("addressInput").value = hex(preset.address); $("lengthInput").value = hex(preset.size); }
   $("regionNote").textContent = region.note || "";
-  const program = document.querySelector('[data-operation="program"]');
-  program.textContent = region.kind === "otp" ? "Program once" : "Program";
   updateRange(); renderMap(); controls();
 }
 function updateRange() {
@@ -151,7 +153,6 @@ function updateRange() {
       region = selected;
       for (const radio of document.querySelectorAll('[name="region"]')) radio.checked = radio.value === region.name;
       $("regionNote").textContent = region.note || "";
-      document.querySelector('[data-operation="program"]').textContent = region.kind === "otp" ? "Program once" : "Program";
     }
     $("rangeHint").textContent = sizeText(length) + " selected";
     $("readScope").value = target?.read_presets?.find(p => p.address === address && p.size === length)?.key || "custom";

@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.5.1 — 2026-10-20
+
+- Fix MPC5748G UTEST selection: default to config/user bytes at 0x004000A0,
+  excluding factory ECC tests; add a separate 12 KiB user OTP preset.
+- Report the exact Nexus failure address, direction, and flash ECC status.
+- Back up only affected OTP units before programming or installing a password,
+  so unrelated factory ECC patterns cannot abort the backup.
+- Show Program once only for OTP regions; ordinary flash uses Write.
+- Add seven regressions for ECC failures and OTP backup contents/order, plus
+  browser checks. All 105 Python tests and browser checks pass locally.
+- Two reads of the 16,224-byte UTEST config/user range matched on one MPC5748G.
+  No physical OTP or password programming was performed.
+
 ## 0.5.0 — 2026-10-20
 
 - Add SPC560B54, SPC560B60, and SPC58EH92 profiles.

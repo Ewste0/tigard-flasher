@@ -66,8 +66,8 @@ def provision(flash, data, backup, *, slot="jtag"):
         else:
             # Install into an erased slot, preserving lifecycle and DCF records.
             # Activation is a separate device configuration operation.
-            from .geometry import select_blocks
-            blocks = select_blocks(flash.chip, address, len(data))
+            from .geometry import backup_blocks
+            blocks = backup_blocks(flash.chip, address, len(data))
             with flash.stage("backup", 0, 0.2):
                 backup([(b, flash.read(b.address, b.size)) for b in blocks])
             with flash.stage("install and verify password", 0.2, 1):

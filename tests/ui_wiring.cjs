@@ -45,6 +45,7 @@ async function main() {
         await page.goto(url, {waitUntil:"networkidle0"});
         await page.waitForFunction(() => !document.getElementById("wiringButton").disabled && document.getElementById("chipSelect").value === "spc5748g");
         assert.equal(await page.$eval("#modeBadge", node => node.textContent), "Tigard hardware");
+        assert.equal(await page.$eval('[data-operation="program"]', node => node.hidden && node.disabled), true);
         assert.equal(await page.$eval("#clockValue", node => node.textContent), mode === "hardware" ? "100 kHz" : "500 kHz");
         await page.click("#wiringButton");
         assert.equal(await page.$eval("#targetConnector", node => node.children.length), 14);
@@ -79,7 +80,16 @@ async function main() {
         assert.equal(await page.$eval("#readScope", node => node.value), "config");
         assert.equal(await page.$eval("#addressInput", node => node.value), "0x00FA8000");
         assert.equal(await page.$eval("#lengthInput", node => node.value), "0x00008000");
+        await page.click('[name="region"][value="UTEST"]');
+        assert.equal(await page.$eval("#readScope", node => node.value), "utest");
+        assert.equal(await page.$eval("#addressInput", node => node.value), "0x004000A0");
+        assert.equal(await page.$eval("#lengthInput", node => node.value), "0x00003F60");
+        assert.equal(await page.$eval('[data-operation="program"]', node => node.hidden), false);
+        await page.select("#readScope", "utest_user");
+        assert.equal(await page.$eval("#addressInput", node => node.value), "0x00401000");
+        assert.equal(await page.$eval("#lengthInput", node => node.value), "0x00003000");
         await page.select("#readScope", "full");
+        assert.equal(await page.$eval('[data-operation="program"]', node => node.hidden && node.disabled), true);
         assert.equal(await page.$eval("#addressInput", node => node.value), "0x00F90000");
         assert.equal(await page.$eval("#lengthInput", node => node.value), "0x005F0000");
         assert.match(await page.$eval("#saveName", node => node.value), /MPC5748G_Full_/);
@@ -98,6 +108,7 @@ async function main() {
         assert.equal(await page.$eval('[data-operation="erase"]', node => node.disabled), true);
         assert.equal(await page.$eval('[data-operation="write"]', node => node.disabled), true);
         assert.equal(await page.$eval('[data-operation="program"]', node => node.disabled), false);
+        assert.equal(await page.$eval('[data-operation="program"]', node => node.hidden), false);
         assert.equal(await page.$eval('[data-operation="program"]', node => node.textContent), "Program once");
         assert.equal(await page.$eval('[data-operation="blank"]', node => node.disabled), false);
         // Review a plan only: no job/USB request is submitted.
@@ -110,9 +121,13 @@ async function main() {
         assert.match(await page.$eval("#planNote", node => node.textContent), /One-time programming/);
         await page.click('#confirmDialog .dialog-actions button[value="cancel"]');
         if (reset === "trst") await page.screenshot({path:path.join(screenshots,"otp-desktop.png"),fullPage:true});
+        await page.click('[name="region"][value="CFLASH"]');
+        assert.equal(await page.$eval('[data-operation="program"]', node => node.hidden && node.disabled), true);
+        assert.equal(await page.$eval('[data-operation="write"]', node => node.disabled), false);
         assert.equal(await page.$("#demoButton"), null);
         assert.equal(await page.$("#modeSelect"), null);
         await page.select("#familySelect", "spi");
+        assert.equal(await page.$eval('[data-operation="program"]', node => node.hidden && node.disabled), true);
         assert.equal(await page.$eval("#targetConnector", node => node.children.length), 8);
         assert.equal(await page.$$eval("#targetConnector .pin b", nodes => nodes.map(node => Number(node.textContent)).join()), "1,8,2,7,3,6,4,5");
         if (reset === "trst") await page.screenshot({path:path.join(screenshots,"spi-desktop.png"),fullPage:true});

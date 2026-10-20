@@ -26,6 +26,23 @@ blocks, other MPC5748 boards, all SPC560/SPC58 variants, and SPI remain unvalida
 hardware. The CLI's `hardware_validated: false` means the entire profile is not
 qualified; it does not discard the limited MPC5748 bench observations above.
 
+## UTEST bench follow-up — 2026-10-20
+
+On the same MPC5748G/Tigard setup at 1 MHz, the full UTEST read failed at
+`0x00400060` with `RWCS=0x10000006`. FMC MCR changed from `0x00000600` to
+`0x00008600`, setting the ECC error flag. UID, DCF, user OTP, and configuration
+sample reads succeeded. A contiguous read of all 16,224 bytes from
+`0x004000A0` through `0x00403FFF` succeeded. A second read through the updated
+UI API saved a dump with the same SHA-256 in approximately 13 seconds.
+This range excludes the factory
+ECC tests and is not a complete raw UTEST image.
+
+The reported password-install job failed while backing up the entire UTEST
+block, before a programming pulse. Version 0.5.1 backs up only the affected
+OTP units (32 bytes for a C55 password). That change has failure-injection and
+end-to-end API/CLI tests, but no physical OTP or password programming test.
+The MPC5748 read presets are not applied to SPC58H's different factory map.
+
 ## Offline verification
 
 The unit suite covers TAP/MPSSE sequencing, OnCE/Nexus memory access, controller
@@ -39,6 +56,9 @@ exercise independent controller models, not a physical MCU. Browser tests cover
 both reset mappings, 14-pin and 10-pin connectors, SPI wiring, named saves,
 read presets, OTP control availability and plan review, password-field lengths, hardware-mode presentation with a mocked adapter descriptor, and
 continuous scrolling through a synthetic 16 MiB image.
+Regression tests inject the factory UTEST ECC failure, verify exact read bounds,
+retain unrelated bus errors, and check OTP backup addresses, contents, and
+failure-before-programming behavior.
 
 CI contains Python 3.10/3.13 jobs on Linux, macOS, and Windows, plus Linux browser
 tests and distribution checks. A configured workflow is not a claim that these

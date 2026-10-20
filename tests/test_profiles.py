@@ -19,7 +19,7 @@ from spc5tool.web import Workspace, catalog
 
 class ProfileTests(unittest.TestCase):
     def test_config_matches_pcp_and_full_stays_separate(self):
-        config, full = SPC5748G.read_presets
+        config, full = (next(p for p in SPC5748G.read_presets if p["key"] == key) for key in ("config", "full"))
         self.assertEqual((config['address'], config['size']), (0xFA8000, 0x8000))
         self.assertEqual([b.name for b in select_blocks(SPC5748G, config['address'], config['size'])], ['CFLASH.S6', 'CFLASH.S7'])
         self.assertEqual((full['address'], full['size']), (0xF90000, 0x5F0000))

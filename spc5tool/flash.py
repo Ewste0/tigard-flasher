@@ -3,7 +3,7 @@ import time
 import math
 from contextlib import contextmanager
 
-from .errors import DriverError, OperationTimeout, VerificationError
+from .errors import DriverError, NexusBusError, OperationTimeout, VerificationError
 from .geometry import select_blocks
 
 DONE, PEG, PGM, ERS, EHV = 0x400, 0x200, 0x10, 4, 1
@@ -51,7 +51,29 @@ class Flash:
         data = bytearray()
         for offset in range(0, size, 4096):
             count = min(4096, size - offset)
-            chunk = self.memory.read(address + offset, count)
+            try:
+                chunk = self.memory.read(address + offset, count)
+            except NexusBusError as exc:
+                # RWCS alone cannot distinguish protection from an ECC fault.
+                # A new Nexus access allows us to inspect the controller after
+                # the failed transfer; retain the original error if this fails.
+                block = next(b for b in blocks if b.address <= exc.address < b.end)
+                try:
+                    status = self.memory.read32(block.controller)
+                except Exception:
+                    raise exc
+                detail = f"{exc}; flash MCR=0x{status:08X}."
+                if (self.chip.algorithm == "c55-mpc5748" and
+                        0x400060 <= exc.address < 0x4000A0 and status & 0x8000):
+                    detail += (" UTEST factory ECC test patterns deliberately trigger errors. "
+                               "Select UTEST config + user (0x004000A0, length 0x3F60) "
+                               "or UTEST user OTP (0x00401000, length 0x3000). "
+                               "No complete dump was returned.")
+                elif status & 0x8000:
+                    detail += " The flash controller reports an ECC error."
+                else:
+                    detail += " Check the address and device read protection; RWCS alone does not identify the cause."
+                raise DriverError(detail) from exc
             if len(chunk) != count:
                 raise DriverError("short target memory read")
             data.extend(chunk)

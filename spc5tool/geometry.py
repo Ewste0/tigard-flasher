@@ -5,7 +5,7 @@ AN12092 figure 3 (MPC5748G), MPC5748G.h C55FMC register layout.
 ST DS12304 and automotive OpenOCD supply SPC58H geometry. OTP and shadow
 are separate capabilities; factory BAF/HSM descriptors are read-only.
 """
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 
 @dataclass(frozen=True)
@@ -23,6 +23,23 @@ class Block:
     @property
     def end(self):
         return self.address + self.size
+
+
+def backup_blocks(chip, address, size):
+    """Back up erase blocks, or only touched ECC units for non-erasing OTP.
+
+    Reading an entire UTEST block can hit intentional factory ECC errors or
+    protected slots unrelated to the requested operation. OTP programming never
+    erases a block, so its backup covers only the units the operation can change.
+    These clipped descriptors are backup spans, never erase geometry.
+    """
+    blocks = select_blocks(chip, address, size)
+    unit = chip.program_unit
+    start = address // unit * unit
+    end = (address + size + unit - 1) // unit * unit
+    return tuple(replace(b, address=max(b.address, start),
+                         size=min(b.end, end) - max(b.address, start))
+                 if b.kind == "otp" else b for b in blocks)
 
 
 def blocks_for(chip):

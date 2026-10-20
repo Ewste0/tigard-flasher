@@ -2,7 +2,7 @@
 import time
 import math
 
-from .errors import DriverError, OperationTimeout
+from .errors import NexusBusError, OperationTimeout
 from .geometry import checked_range
 
 
@@ -52,23 +52,23 @@ class NexusMemory(WordMemory):
             raise ValueError("timeout must be positive and finite")
         self.once, self.timeout = once, timeout
 
-    def _wait(self, read):
+    def _wait(self, read, address):
         deadline = time.monotonic() + self.timeout
         while True:
             status = self.once.nexus_read(7)
             if status & 2:
-                raise DriverError(f"Nexus bus error RWCS=0x{status:08x}")
+                raise NexusBusError("read" if read else "write", address, status)
             if bool(status & 1) == read:
                 return
             if time.monotonic() >= deadline:
-                raise OperationTimeout("Nexus memory access timed out")
+                raise OperationTimeout(f"Nexus {'read' if read else 'write'} timed out at 0x{address:08X}")
             time.sleep(0.001)
 
     def read32(self, address):
         self.word_address(address)
         self.once.nexus_write(9, address)
         self.once.nexus_write(7, 0x90000004 | self.once.chip.nexus_access)  # AC, SZ=32 bits, CNT=1
-        self._wait(True)
+        self._wait(True, address)
         return int.from_bytes(self.once.nexus_read(10).to_bytes(4, "little"), "big")
 
     def write32(self, address, value):
@@ -79,4 +79,4 @@ class NexusMemory(WordMemory):
         self.once.nexus_write(7, 0xD0000004 | self.once.chip.nexus_access)
         # RWD must follow RWCS: writing RWD starts the bus transfer.
         self.once.nexus_write(10, int.from_bytes(value.to_bytes(4, "big"), "little"))
-        self._wait(False)
+        self._wait(False, address)

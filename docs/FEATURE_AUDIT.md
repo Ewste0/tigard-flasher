@@ -6,10 +6,10 @@ This is a comparison of advertised categories, not a certification of equivalent
 algorithms, supported chips, performance, or reliability. The public description
 does not provide an exhaustive device list or a test specification.
 
-| Advertised category | Tigard Flasher 0.5.0 | Remaining limitation |
+| Advertised category | Tigard Flasher 0.5.1 | Remaining limitation |
 | --- | --- | --- |
 | SPC/MPC over JTAG | Python TAP, OnCE/Nexus, and flash-controller drivers | Six explicit MCU profiles; no exhaustive SKADI device list available |
-| Flash read/write | Read, patch write, program, verify, erase, blank check, backups | Hardware proof is restricted to one MPC5748 configuration block |
+| Flash read/write | Read, patch write, program, verify, erase, blank check, backups | Hardware writes tested on one MPC5748 configuration block; UTEST config/user reads also tested |
 | OTP / SHADOW | OTP read/program/verify/blank; SHADOW preservation | OTP cannot erase; BAF and HSM programming unavailable |
 | Passwords | Family lengths, SPC560 login, password installation | C55 JTAG login and PASS-group unlock await verified protocol details; no automatic protection activation |
 | SPI flash | W25Q128JV / EF4018 profile with offline tests | Other SPI chips not supported; no SPI bench test |

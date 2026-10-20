@@ -101,6 +101,10 @@ SPC5748G = Chip(
     read_presets=(
         {"key": "config", "name": "Config only · 32 KiB", "address": 0x00FA8000, "size": 0x8000, "filename": "MPC5748G_Config"},
         {"key": "full", "name": "Full flash · 5.94 MiB", "address": 0x00F90000, "size": 0x005F0000, "filename": "MPC5748G_Full"},
+        {"key": "utest", "name": "UTEST config + user · excludes ECC tests", "address": 0x004000A0,
+         "size": 0x3F60, "filename": "MPC5748G_UTEST_0x004000A0", "region_default": "UTEST"},
+        {"key": "utest_user", "name": "UTEST user OTP · 12 KiB", "address": 0x00401000,
+         "size": 0x3000, "filename": "MPC5748G_UTEST_User_0x00401000"},
     ),
     sram_base=0x40000000,
     flash_ctrl={"FMC": 0xFFFE0000, "SWT0": 0xFC050000, "SWT_UTEST": 0xFC058000,
@@ -109,7 +113,8 @@ SPC5748G = Chip(
         FlashRegion("CFLASH", 0x00F90000, 0x005F0000,
                     "small 0x00F90000-0x00FFFFFF (8x16k,6x32k,2x64k) + 22x256k @0x01000000+"),
         FlashRegion("UTEST", 0x00400000, 0x00004000,
-                    "OTP: passwords and DCF records. Program erased ECC units only.", "otp"),
+                    "Default read starts at 0x004000A0, excluding factory ECC tests. "
+                    "Passwords may be read-protected. User OTP starts at 0x00401000. No erase.", "otp"),
         FlashRegion("BAF", 0x00404000, 0x00004000, "Factory Boot Assist Flash", "rom", False),
         FlashRegion("HSMData", 0x00F80000, 0x00008000, "Security-dependent access; write backend unavailable", "security", False),
         FlashRegion("HSMCode", 0x00610000, 0x00020000, "Two 64 KiB blocks; write backend unavailable", "security", False),

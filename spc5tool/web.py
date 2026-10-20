@@ -18,7 +18,7 @@ from . import chips
 from .errors import DriverError
 from .files import save_backup, sha256, write_new
 from .flash import Flash
-from .geometry import Block, blocks_for, select_blocks
+from .geometry import Block, backup_blocks, blocks_for, select_blocks
 from .idcode import read_idcode
 from .mpsse import DEFAULT_URL, MpsseTransport
 from .session import TargetSession
@@ -237,16 +237,20 @@ class Workspace:
                     unit = chips.CHIPS[target].program_unit
                     if address % unit or size % unit:
                         raise ValueError(f"Program requires complete aligned {unit}-byte ECC units")
+        backups = (backup_blocks(chips.CHIPS[target], address, size)
+                   if target in chips.CHIPS and action in ("program", "install_password") else blocks)
         filename = safe_filename(request.get("filename") or f"{target}-{address:08x}-{mode}.bin")
         plan = {"id": uuid.uuid4().hex, "target": target, "action": action, "mode": mode,
                 "address": address, "length": size, "frequency": frequency, "expected_id": expected,
                 "file_id": file_id if info else None, "image": info,
-                "blocks": [asdict(b) for b in blocks], "backup_bytes": sum(b.size for b in blocks),
+                "blocks": [asdict(b) for b in blocks], "backup_bytes": sum(b.size for b in backups),
+                "backup_ranges": [asdict(b) for b in backups],
                 "preserve": action == "write", "filename": filename}
         plan["password_slot"] = slot if action == "install_password" else None
         plan["notes"] = []
         if any(b.kind == "otp" for b in blocks) and action in MUTATING:
             plan["notes"].append("One-time programming: only erased ECC units may be written. No erase or rollback is possible.")
+            plan["notes"].append("Backup covers only the affected OTP units; unrelated factory ECC tests and password slots are not read.")
         if any(b.kind == "shadow" for b in blocks):
             plan["notes"].append("SHADOW erase preserves the configuration tail at +0x3DD0. Writing validates the censorship words before erasing.")
         if action == "install_password":
@@ -320,7 +324,7 @@ class Workspace:
 
         def backup(originals):
             save_backup(backup_dir, target, originals)
-            self._log(job, f"Backup saved: {len(originals)} blocks with SHA-256 manifest.")
+            self._log(job, f"Backup saved: {len(originals)} ranges with SHA-256 manifest.")
             with self.lock:
                 job["result"]["backup_path"] = str(backup_dir)
 
@@ -338,7 +342,7 @@ class Workspace:
                         result = {"message": str(code), "idcode": code.raw}
             else:
                 data = self.file(plan["file_id"])[1].read_bytes() if plan["file_id"] else None
-                self._log(job, f"{action.capitalize()} {plan['length']:,} bytes at 0x{plan['address']:08X}.")
+                self._log(job, f"{action.replace('_', ' ').capitalize()} {plan['length']:,} bytes at 0x{plan['address']:08X}.")
                 with self._backend(plan, progress) as flash:
                     if action == "authenticate":
                         result["message"] = "Password supplied; debug session opened. An already uncensored target cannot validate the password."
@@ -358,7 +362,7 @@ class Workspace:
                         flash.patch(plan["address"], data, backup)
                         result["message"] = "Write verified. Bytes outside the image were preserved."
                     elif action == "program":
-                        blocks = [Block(**b) for b in plan["blocks"]]
+                        blocks = [Block(**b) for b in plan["backup_ranges"]]
                         originals = []
                         for index, b in enumerate(blocks):
                             if isinstance(flash, Flash):

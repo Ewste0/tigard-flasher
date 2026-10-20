@@ -1,7 +1,8 @@
 # OTP, SHADOW and passwords
 
-This document describes version 0.5.0. New security/OTP paths are tested with
-controller models only. They have not been validated on a physical target.
+This document describes version 0.5.1. OTP and password programming are tested
+with controller models only. MPC5748G UTEST reads after the factory test area
+have also been checked on one physical target; see [VALIDATION.md](VALIDATION.md).
 
 ## Region operations
 
@@ -11,7 +12,7 @@ controller models only. They have not been validated on a physical target.
 | SPC560 SHADOW | Yes | Erased 8-byte units, with configuration validation | Preserves valid boot/security configuration |
 | SPC560 CFLASH_OTP, DFLASH_OTP | Yes | Once per erased 8-byte ECC unit | Not supported by silicon |
 | MPC5748 CFLASH | Yes | Erased 8-byte units | Yes |
-| MPC5748 UTEST | Subject to read protection | Once per erased 8-byte ECC unit | Not supported by silicon |
+| MPC5748 UTEST | Exclude factory ECC tests; subject to read protection | Once per erased 8-byte ECC unit | Not supported by silicon |
 | SPC58NH92/EH92 CFLASH, DFLASH | Yes | Erased 16-byte units | Yes |
 | SPC58NH92/EH92 UTEST | Subject to read protection | Once per erased 16-byte unit | Not supported by silicon |
 | BAF | Subject to device permissions | Unavailable: factory boot area | Unavailable |
@@ -26,10 +27,36 @@ can leave an unusable ECC unit, so do not automatically retry.
 
 Select an OTP region, load the binary, set the address, and choose **Program once**.
 Review the address, image length, affected block, and irreversible-operation note.
-The app saves the affected block before programming and verifies afterward. Erase
+The app saves the affected OTP units before programming and verifies afterward. Erase
 and patch Write are disabled for OTP and rejected by the API/CLI before USB opens.
 Reserved/factory fields and DCF formats remain device-specific: a raw OTP image
 is not validated as a complete security or boot policy.
+
+**Program once** is visible only for OTP regions in the UI. Use **Write** for
+ordinary CFLASH/DFLASH. The CLI's low-level `program` operation remains available
+for already-erased ordinary flash.
+
+### MPC5748G UTEST reads
+
+Selecting UTEST defaults to **UTEST config + user**, the contiguous range
+`0x004000A0..0x00403FFF` (16,224 bytes). The first 160 bytes are excluded; they
+include factory ECC test patterns. This is not a complete 16 KiB raw UTEST image:
+file offset zero corresponds to physical address `0x004000A0`.
+The separate **UTEST user OTP** preset reads `0x00401000..0x00403FFF` (12 KiB).
+Password fields in the configuration range can still be unreadable after a
+lifecycle transition; these reads fail rather than inventing bytes.
+
+On the tested MPC5748G, reading `0x00400060` produced `RWCS=0x10000006` and
+`MCR=0x00008600` (ECC error). This is consistent with the factory double-bit
+ECC test patterns described in NXP AN13179. Selecting the full 16 KiB block
+still encounters those patterns. The driver reports the failing physical
+address and controller status and does not return a fabricated full dump.
+
+OTP backups cover the aligned units to be changed, not the entire UTEST block.
+Installing a C55 password therefore backs up its 32-byte slot, avoiding unrelated
+factory tests and protected slots. Backup failure or nonblank target data stops
+the operation before programming. Backups for erasable flash still cover full
+affected erase blocks.
 
 SHADOW erase clears its user area, then restores the configuration tail starting
 at offset `0x3DD0`. It does not leave the entire sector blank. Patch write validates
@@ -96,6 +123,9 @@ never printed or hashed into a public plan.
 - NXP [AN12092](https://www.nxp.com/docs/en/application-note/AN12092.pdf), figures
   1 and 3: MPC5748 UTEST/password map, 256-bit lengths, OTP restriction, and
   ordinary/HSM flash block mapping. PASS register input is distinct from JTAG scan input.
+- NXP [AN13179](https://www.nxp.com/docs/en/application-note/AN13179.pdf), section 9:
+  MPC57xx factory ECC/EDC test patterns, including the double-bit error test
+  at `0x00400060`. This address was reproduced on the MPC5748G bench.
 - ST [RM0452](https://www.st.com.cn/resource/en/reference_manual/rm0452-spc58-h-line--32-bit-power-architecture-automotive-mcu-triple-z4-cores-200-mhz-10-mbytes-flash-hsm-asild-stmicroelectronics.pdf),
   table 14: SPC58H password offsets. The full download could not be retrieved in
   this environment; the indexed table confirms slot addresses, not JTAG wire order.

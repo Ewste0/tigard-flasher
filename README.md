@@ -5,8 +5,8 @@ CLI, and automated tests with isolated device models. Uses Tigard's FT2232H chan
 No account or subscription is needed. The application runs locally; GitHub hosts
 the source and release downloads, not a web service that accesses USB.
 
-**Hardware validation is limited to one MPC5748G board: configuration reads and
-one configuration-block write with a fresh matching readback.** Other profiles
+**Hardware validation is limited to one MPC5748G board: configuration and UTEST
+config/user reads, plus one configuration-block write with a matching readback.** Other profiles
 have offline tests only. This is not a claim of complete SKADI compatibility.
 See the [feature audit](docs/FEATURE_AUDIT.md) and [validation record](docs/VALIDATION.md).
 
@@ -21,10 +21,12 @@ Screenshot uses generated test bytes; no firmware or connected target is shown.
 - Family-specific password lengths, SPC560 JTAG authentication, and password installation.
   C55 JTAG authentication and HSM programming remain unavailable; see [security operations](docs/SECURITY_OPERATIONS.md).
 - MPC5748G **Config only** default: 32 KiB at `0x00FA8000`. Full-array and custom ranges are selectable.
+- MPC5748G UTEST presets exclude the factory ECC test area. The default UTEST
+  file starts at `0x004000A0`; it is not a complete 16 KiB raw image.
 - Continuous virtualized hex/ASCII viewer for raw binaries up to 16 MiB, offset navigation,
   named saves, SHA-256, drag-and-drop, and cancellable reads.
 - Interactive Tigard/14-pin/10-pin/SPI wiring guides, USB presence, and target identification.
-- Reviewed write plans, original-block backups with checksums, preserved bytes outside
+- Reviewed write plans, original-block backups (OTP: affected units) with checksums, preserved bytes outside
   a patch, and automatic verification.
 
 | Profile | Main and data flash | Additional regions |
@@ -37,7 +39,7 @@ Screenshot uses generated test bytes; no firmware or connected target is shown.
 | SPI `w25q128jv` | 16 MiB; JEDEC `EF4018` | SPI security registers are not supported |
 
 Only one MPC5748 configuration-block write has hardware evidence. New profiles,
-OTP, SHADOW, passwords, and SPC58 programming have offline tests only. Profiles
+OTP programming, SHADOW, passwords, and SPC58 programming have offline tests only. Profiles
 are explicit: an IDCODE does not establish the exact part or its geometry.
 “Full flash” selects the main array; additional regions must be selected separately.
 Access still depends on the target's protection and lifecycle state.
