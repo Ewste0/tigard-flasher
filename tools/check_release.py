@@ -41,7 +41,7 @@ def inspect(name, data):
 
 def source_files():
     if (ROOT / ".git").is_dir():
-        names = subprocess.check_output(["git", "ls-files", "-z"], cwd=ROOT).decode().split("\0")
+        names = subprocess.check_output(["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z"], cwd=ROOT).decode().split("\0")
         return [ROOT / name for name in names if name]
     return sorted(p for p in ROOT.rglob("*") if p.is_file() and p.name != ".DS_Store" and (
         p.relative_to(ROOT).parts[0] in DIRECTORIES or p.name in FILES and p.parent == ROOT

@@ -1541,3 +1541,11 @@ dialog::backdrop {
   min-width:0;
   overflow-wrap:anywhere;
 }
+.security-panel { padding:20px; }
+.security-panel input,.security-panel select { width:100%; margin:5px 0 10px; }
+.security-panel button { width:100%; margin:5px 0; border:1px solid #dce3f1; }
+.security-panel details { margin-top:12px; }
+.security-panel summary { cursor:pointer; font-size:12px; }
+.region-name small { font-size:10px; }
+.progress-area progress { flex:1; min-width:40px; }
+#progressText { flex:none; min-width:30px; text-align:right; }

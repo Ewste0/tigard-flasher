@@ -2,6 +2,7 @@
 import sys
 import types
 import unittest
+import tempfile
 from unittest.mock import Mock, patch
 
 from spc5tool.chips import SPC560B64, SPC5748G
@@ -9,6 +10,7 @@ from spc5tool.errors import DriverError
 from spc5tool.mpsse import MpsseTransport, MpsseError
 from spc5tool.session import TargetSession
 from spc5tool.spi import PARTS, SpiNor
+from spc5tool.web import Workspace
 
 
 class HardwareContractTests(unittest.TestCase):
@@ -29,6 +31,16 @@ class HardwareContractTests(unittest.TestCase):
                     'ftdi://ftdi:2232h/2', direction=0x3B, initial=0x38, frequency=100000)
             factory.return_value.close.assert_called_once()
             modules['pyftdi.usbtools'].UsbTools.flush_cache.assert_called_once()
+
+    def test_absent_serial_adapter_returns_disconnected_status(self):
+        modules, factory, _ = self.fake_modules()
+        factory.list_devices.side_effect = RuntimeError('No USB device with selected serial')
+        with tempfile.TemporaryDirectory() as directory, patch.dict(sys.modules, modules):
+            state = Workspace(directory).adapter()
+        self.assertFalse(state['connected'])
+        self.assertEqual(state['devices'], [])
+        self.assertIn('No USB device', state['message'])
+        factory.return_value.open_mpsse_from_url.assert_not_called()
 
     def test_jtag_failed_open_closes(self):
         modules, factory, _ = self.fake_modules()

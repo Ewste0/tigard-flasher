@@ -22,7 +22,7 @@ bench observations, not independently reproducible public firmware fixtures.
 Firmware execution and boot behavior after the test were not evaluated.
 
 The full main-array read was canceled. Full-array writing, other configuration
-blocks, other MPC5748 boards, SPC560B64, SPC58NH92, and SPI remain unvalidated on
+blocks, other MPC5748 boards, all SPC560/SPC58 variants, and SPI remain unvalidated on
 hardware. The CLI's `hardware_validated: false` means the entire profile is not
 qualified; it does not discard the limited MPC5748 bench observations above.
 
@@ -30,10 +30,14 @@ qualified; it does not discard the limited MPC5748 bench observations above.
 
 The unit suite covers TAP/MPSSE sequencing, OnCE/Nexus memory access, controller
 geometry, timeouts, mismatched IDs, preservation across erase blocks, backup
-failures, verification failures, persistent simulation, and server API restrictions.
-SPC58NH92 mutation denial is checked at API/CLI/flash layers. Browser tests cover
+failures, verification failures, persistent test doubles, and server API restrictions.
+Additional tests cover SPC58H's small/large selector banks and 16-byte program
+units, OTP preflight and repeat-write rejection, API OTP round trips, preservation
+of SHADOW boot/security words, password lengths and slot locations, C90 serial
+password order, secret cleanup, and monotonic multi-block progress. These tests
+exercise independent controller models, not a physical MCU. Browser tests cover
 both reset mappings, 14-pin and 10-pin connectors, SPI wiring, named saves,
-read presets, hardware-mode presentation with a mocked adapter descriptor, and
+read presets, OTP control availability and plan review, password-field lengths, hardware-mode presentation with a mocked adapter descriptor, and
 continuous scrolling through a synthetic 16 MiB image.
 
 CI contains Python 3.10/3.13 jobs on Linux, macOS, and Windows, plus Linux browser
@@ -51,10 +55,10 @@ without generating a dump. No automated test intentionally programs physical har
 - [ST automotive OpenOCD branch](https://github.com/STMicroelectronics/OpenOCD/tree/openocd-automotive-mcu-r1),
   `tcl/target/spc58xh.cfg`, `tcl/target/spc58.cfg`, and `src/target/powerpc.c`:
   SPC58 IDCODE `0x01146041`, six-bit IR, boot core selector, Nexus attributes,
-  watchdog address, and DFLASH window. Referenced to cross-check parameters;
+  watchdog address, CFLASH/DFLASH windows and sector selectors. Referenced to cross-check parameters;
   no OpenOCD source or proprietary loader is bundled.
 
 The MPC5748 configuration window and SPC58NH DFLASH window were also checked
 against user-provided programming profiles. Those private profiles are not
 distributed. Each supported window is bounded in code; it is not a general
-read-any-address or security-bypass interface.
+read-any-address interface. See [SECURITY_OPERATIONS.md](SECURITY_OPERATIONS.md) for the password and OTP sources and remaining limitations.

@@ -66,8 +66,16 @@ function log(text, level = "INFO", timestamp = Date.now()) {
   $("logCount").textContent = `${++eventCount} events`;
 }
 function controls() {
-  for (const button of document.querySelectorAll("[data-operation]")) button.disabled = !ready || busy || (target?.read_only && ["write", "erase"].includes(button.dataset.operation)) || (["write", "verify"].includes(button.dataset.operation) && !file);
-  for (const id of ["openButton", "emptyOpen", "identifyButton", "settingsButton", "familySelect", "chipSelect", "addressInput", "lengthInput", "regionRange", "readScope", "saveName"]) $(id).disabled = !ready || busy;
+  for (const button of document.querySelectorAll("[data-operation]")) {
+    const action = button.dataset.operation;
+    const mutation = ["write", "program", "erase"].includes(action);
+    button.disabled = !ready || busy || (mutation && (target?.read_only || region?.writable === false)) ||
+      (["write", "erase"].includes(action) && region?.kind === "otp") ||
+      (["write", "program", "verify"].includes(action) && !file) ||
+      (action === "authenticate" && !target?.password_login) ||
+      (action === "install_password" && !target?.password_install);
+  }
+  for (const id of ["openButton", "emptyOpen", "identifyButton", "settingsButton", "familySelect", "chipSelect", "addressInput", "lengthInput", "regionRange", "readScope", "saveName", "currentPassword", "newPassword", "confirmPassword", "passwordSlot"]) $(id).disabled = !ready || busy;
   for (const input of document.querySelectorAll(".region-option input, .block-card")) input.disabled = busy;
   $("saveButton").disabled = !file || busy;
   $("jumpButton").disabled = !viewBytes;
@@ -82,6 +90,15 @@ function setTarget() {
   expectedId = "";
   $("targetState").textContent = "Not identified";
   target = targets.find(t => t.key === $("chipSelect").value);
+  for (const id of ["currentPassword", "newPassword", "confirmPassword"]) $(id).value = "";
+  $("securityPanel").hidden = target.protocol !== "JTAG";
+  $("passwordLength").textContent = target.password_bits ? `${target.password_bits / 4} hex digits` : "";
+  for (const id of ["currentPassword", "newPassword", "confirmPassword"]) {
+    $(id).maxLength = target.password_bits / 4 || 64;
+    $(id).placeholder = `${target.password_bits / 4 || 64} hexadecimal digits`;
+  }
+  $("passwordSlot").replaceChildren(new Option("JTAG", "jtag"), ...(target.password_bits === 256 ? [0,1,2,3].map(n => new Option(`PASS group ${n}`, `group${n}`)) : []));
+  $("passwordNote").textContent = target.password_login ? "Enter words in flash-address order (NVPWD0, then NVPWD1). Kept in memory for the session; supplied again after each reset." : "256 bits = 32 bytes = 64 hex digits. JTAG login awaits verification of this family's serial password register; password length alone is not enough.";
   $("protocolBadge").textContent = target.protocol;
   $("targetAlias").textContent = target.alias; $("targetCore").textContent = target.core;
   $("footerTarget").textContent = target.name; $("regionCount").textContent = String(target.regions.length).padStart(2, "0");
@@ -90,14 +107,14 @@ function setTarget() {
     const label = document.createElement("label"); label.className = "region-option";
     const radio = document.createElement("input"); radio.type = "radio"; radio.name = "region"; radio.value = r.name; radio.checked = !index; radio.setAttribute("aria-label", `${r.name}, ${sizeText(r.size)}`);
     const name = document.createElement("span"); name.className = "region-name";
-    const title = document.createElement("strong"); title.textContent = r.name === "SPI" ? "SPI Flash" : r.name === "CFLASH" ? "Code flash" : "Data flash";
-    const address = document.createElement("small"); address.textContent = hex(r.base);
+    const title = document.createElement("strong"); title.textContent = r.name;
+    const address = document.createElement("small"); address.textContent = `${hex(r.base)} · ${r.writable === false ? "Read" : r.kind === "otp" ? "Read / Program once" : "Read / Write / Erase"}`;
     const capacity = document.createElement("span"); capacity.className = "region-capacity"; capacity.textContent = sizeText(r.size);
     name.append(title, address); label.append(radio, name, capacity); $("regionList").append(label);
     radio.addEventListener("change", () => setRegion(r));
   });
   $("readScope").replaceChildren(...(target.read_presets || []).map(p => new Option(p.name, p.key)), new Option("Custom range", "custom"));
-  $("profileNote").textContent = target.read_only ? "DFLASH read only · SPC58NH hardware validation pending. Write and erase disabled." : "";
+  $("profileNote").textContent = target.key.startsWith("spc58") ? "Hardware validation pending · 16-byte programming units" : "";
   setRegion(target.regions[0]);
   if (target.read_presets?.length) applyPreset(target.read_presets[0].key);
   renderWiring(); controls();
@@ -121,14 +138,25 @@ function setRegion(value) {
   region = value; $("addressInput").value = hex(region.base);
   const firstBlock = target.blocks.find(b => b.address === region.base);
   $("lengthInput").value = hex(firstBlock ? firstBlock.size : target.sector);
-  updateRange(); renderMap();
+  $("regionNote").textContent = region.note || "";
+  const program = document.querySelector('[data-operation="program"]');
+  program.textContent = region.kind === "otp" ? "Program once" : "Program";
+  updateRange(); renderMap(); controls();
 }
 function updateRange() {
   try {
     const address = number($("addressInput").value), length = number($("lengthInput").value);
+    const selected = target?.regions.find(r => address >= r.base && address + length <= r.base + r.size);
+    if (selected) {
+      region = selected;
+      for (const radio of document.querySelectorAll('[name="region"]')) radio.checked = radio.value === region.name;
+      $("regionNote").textContent = region.note || "";
+      document.querySelector('[data-operation="program"]').textContent = region.kind === "otp" ? "Program once" : "Program";
+    }
     $("rangeHint").textContent = sizeText(length) + " selected";
     $("readScope").value = target?.read_presets?.find(p => p.address === address && p.size === length)?.key || "custom";
     suggestFilename();
+    controls();
   }
   catch { $("rangeHint").textContent = "Enter a valid range"; }
 }
@@ -149,7 +177,7 @@ function renderMap() {
     const index = Math.floor(start / target.sector);
     blocks = Array.from({length:Math.min(64, target.regions[0].size / target.sector - index)}, (_, i) => ({name:`Sector ${index + i}`, address:(index + i) * target.sector, size:target.sector}));
     $("mapView").querySelector(".view-intro p").textContent = "Up to 64 sectors from the start address. Select a block to set its erase range.";
-  } else $("mapView").querySelector(".view-intro p").textContent = target.read_only ? "DFLASH read window. No erase geometry or write operations are enabled." : "Select a block to use its exact erase range.";
+  } else $("mapView").querySelector(".view-intro p").textContent = "Select a block to set the range. OTP supports Program once; factory and HSM regions are read-only.";
   $("blockGrid").replaceChildren(...blocks.map(block => {
     const button = document.createElement("button"); button.className = "block-card"; button.disabled = busy;
     const name = document.createElement("strong"); name.textContent = block.name;
@@ -327,14 +355,16 @@ async function upload(input) {
 }
 function request(action) {
   return {target:target.key, action, mode, frequency, expected_id:expectedId || null,
-    filename:$("saveName").value,
+    filename:$("saveName").value, password:$("currentPassword").value,
+    ...(action === "install_password" ? {new_password:$("newPassword").value, confirm_password:$("confirmPassword").value, password_slot:$("passwordSlot").value} : {}),
     address:action === "identify" ? 0 : number($("addressInput").value), length:action === "identify" ? 0 : number($("lengthInput").value), file_id:file?.id};
 }
 async function operation(action) {
   if (busy) return; setBusy(true);
   try {
     const plan = await api("/api/plan", request(action));
-    if (["write", "erase"].includes(action)) { review(plan); }
+    if (action === "install_password") { $("newPassword").value = ""; $("confirmPassword").value = ""; }
+    if (["write", "erase", "program", "install_password"].includes(action)) { review(plan); }
     else await run(plan);
   } catch (error) { message(error); setBusy(false); }
 }
@@ -347,6 +377,8 @@ function review(plan) {
   const values = [["Target", target.name], ["Start address", hex(plan.address)], ["Image / range", sizeText(plan.length)], ["Affected blocks", String(plan.blocks.length)], ["Backup size", sizeText(plan.backup_bytes)]];
   $("planDetails").replaceChildren(...values.map(([label, value]) => { const row = document.createElement("div"); const dt = document.createElement("dt"); dt.textContent = label; const dd = document.createElement("dd"); dd.textContent = value; row.append(dt, dd); return row; }));
   $("planNote").textContent = plan.action === "write" ? "Full affected blocks are backed up before erasing. Bytes outside the image are preserved. Written data is verified automatically." : "Selected blocks are backed up before erasing, then checked for blank bytes. The backup will be available to download.";
+  if (["program", "install_password"].includes(plan.action)) $("planNote").textContent = plan.blocks.some(b => b.kind === "shadow") && plan.action === "install_password" ? "Back up SHADOW, preserve configuration, erase and rebuild it with the new password, then verify." : "Back up first, program erased ECC units, then verify. No erase is performed.";
+  $("planNote").textContent += " " + (plan.notes || []).join(" ");
   $("confirmRun").textContent = `Run ${plan.action}`;
   $("confirmDialog").showModal();
 }
@@ -367,7 +399,9 @@ async function follow(job) {
     $("stopRead").disabled = !!job.cancel_requested;
     $("stopRead").textContent = job.cancel_requested ? "Stopping…" : "Stop read";
     $("jobProgress").value = job.progress;
-    $("progressText").textContent = job.finished ? `${job.progress}%` : `${job.phase.toUpperCase()} ${job.progress}%`;
+    if (!job.finished) { $("statusText").textContent = job.plan.action.replaceAll("_", " "); $("statusDetail").textContent = job.phase; }
+    $("progressText").textContent = `${job.progress}%`;
+    $("statusDetail").title = job.phase;
     for (const entry of job.logs.slice(seenLogs)) log(entry.message, "INFO", entry.time * 1000);
     seenLogs = job.logs.length;
     if (job.finished) break;
@@ -382,7 +416,7 @@ async function follow(job) {
   $("jobDot").className = "ready-dot" + (success ? "" : " failed");
   if (job.result.file) await loadFile(job.result.file);
   if (job.result.idcode !== undefined) { expectedId = hex(job.result.idcode); $("expectedId").value = expectedId; $("targetState").textContent = expectedId; $("adapterState").textContent = "Responding"; }
-  if (job.plan.mode === "hardware" && success) { $("adapterState").textContent = "Tigard connected"; if (!job.result.idcode) $("targetState").textContent = "Read successful"; $("connectionNote").textContent = "Hardware responded to the last operation. Click Identify to recheck the current connection."; }
+  if (job.plan.mode === "hardware" && success) { $("adapterState").textContent = "Tigard connected"; if (!job.result.idcode) $("targetState").textContent = `${job.plan.action.replaceAll("_", " ")} successful`; $("connectionNote").textContent = "Hardware responded to the last operation. Click Identify to recheck the current connection."; }
   for (const [label, info] of [["Download dump", job.result.file], ["Download backup ZIP", job.result.backup]]) {
     if (!info) continue;
     const link = document.createElement("a"); link.href = "/api/download/" + info.id; link.download = info.name; link.textContent = label;

@@ -1,0 +1,113 @@
+# OTP, SHADOW and passwords
+
+This document describes version 0.5.0. New security/OTP paths are tested with
+controller models only. They have not been validated on a physical target.
+
+## Region operations
+
+| Region | Read / verify / blank check | Program | Erase / patch write |
+| --- | --- | --- | --- |
+| SPC560 CFLASH, DFLASH | Yes | Erased 8-byte units | Yes |
+| SPC560 SHADOW | Yes | Erased 8-byte units, with configuration validation | Preserves valid boot/security configuration |
+| SPC560 CFLASH_OTP, DFLASH_OTP | Yes | Once per erased 8-byte ECC unit | Not supported by silicon |
+| MPC5748 CFLASH | Yes | Erased 8-byte units | Yes |
+| MPC5748 UTEST | Subject to read protection | Once per erased 8-byte ECC unit | Not supported by silicon |
+| SPC58NH92/EH92 CFLASH, DFLASH | Yes | Erased 16-byte units | Yes |
+| SPC58NH92/EH92 UTEST | Subject to read protection | Once per erased 16-byte unit | Not supported by silicon |
+| BAF | Subject to device permissions | Unavailable: factory boot area | Unavailable |
+| HSM code/data | Subject to HSM/PASS permissions | Backend unavailable | Backend unavailable |
+
+Read and verify operate on bytes. Blank check confirms that requested bytes read
+FF; this is not proof of virgin ECC cells. Program skips all-FF units and rejects
+any input range containing nonblank bytes before starting a pulse. Once a unit
+has been programmed, do not reuse it, including with unchanged data. OTP backups
+are for reference; they cannot reverse programming. A failed programming pulse
+can leave an unusable ECC unit, so do not automatically retry.
+
+Select an OTP region, load the binary, set the address, and choose **Program once**.
+Review the address, image length, affected block, and irreversible-operation note.
+The app saves the affected block before programming and verifies afterward. Erase
+and patch Write are disabled for OTP and rejected by the API/CLI before USB opens.
+Reserved/factory fields and DCF formats remain device-specific: a raw OTP image
+is not validated as a complete security or boot policy.
+
+SHADOW erase clears its user area, then restores the configuration tail starting
+at offset `0x3DD0`. It does not leave the entire sector blank. Patch write validates
+both censorship words before erasing and restores configuration before user data.
+Power loss during that erase/rebuild can still lose configuration. A backup cannot
+prevent that interruption. Reserved fields are preserved when patching a smaller
+image; a complete supplied SHADOW image must preserve the intended device settings.
+
+## Password lengths and implemented capabilities
+
+| Family | Bits | Bytes | Hex digits | JTAG login | Install password |
+| --- | ---: | ---: | ---: | --- | --- |
+| SPC560B54/B60/B64 | 64 | 8 | 16 | Implemented; bench unvalidated | SHADOW erase/preserve/rebuild |
+| MPC5748G | 256 | 32 | 64 | Unavailable pending verified serial protocol | JTAG or PASS group 0–3, OTP |
+| SPC58NH92/EH92 | 256 | 32 | 64 | Unavailable pending verified serial protocol | JTAG or PASS group 0–3, OTP |
+
+**32 bytes is not 32 bits.** Enter hexadecimal without `0x`. The CLI accepts
+whitespace between words. Input follows increasing flash address: NVPWD0 then
+NVPWD1 on SPC560, or the eight UTEST words in address order on C55. SPC560 login
+translates those words into the held-reset 65-bit CENSOR_CTRL scan (64 password
+bits plus its enable bit). Each SPC560 16-bit password halfword must contain both
+a zero and a one when installing a private password.
+
+SPC560 passwords occupy `0x00203DD8..0x00203DDF`. On both listed C55 families,
+JTAG occupies `0x00400120..0x0040013F`; PASS groups 0–3 start at `0x00400140`,
+`0x00400160`, `0x00400180`, and `0x004001A0`, each 32 bytes.
+
+Installing a password preserves censorship/lifecycle/DCF settings. It does not
+automatically enable protection. JTAG authentication and PASS-group unlocking
+are different protocols; a JTAG password does not unlock all flash protections.
+PASS-group authentication and automatic protection activation are not implemented.
+Opening an already uncensored SPC560 cannot establish that a supplied password
+was correct. Protected targets may deny backups/readback and cause installation
+to fail before programming.
+
+Passwords are omitted from plans, status JSON and logs. Pending plan secrets
+remain only in server memory until the job ends or the plan is evicted. Current
+login input remains in the browser until cleared/reloaded or the chip changes.
+Backups and raw dumps can contain existing passwords and security data; keep
+them private. They are not removed from the device image.
+
+CLI examples (password files contain only hexadecimal text):
+
+```sh
+python -m spc5tool blank spc560b64 --address 0x400000 --length 0x2000
+python -m spc5tool program spc560b64 otp.bin --address 0x400000
+python -m spc5tool authenticate spc560b64 --password-file current-password.txt
+python -m spc5tool install-password spc58nh92 --new-password-file new-password.txt --slot jtag
+```
+
+The `program` and `install-password` commands initially print a plan. To execute programming or
+installation, add `--execute --backup NEW_DIRECTORY --expect-idcode ID` and the
+connection/reset options appropriate to the board. Password file contents are
+never printed or hashed into a public plan.
+
+## Sources and unresolved details
+
+- NXP MPC5607B Reference Manual rev 7.1, flash memory/configuration and JTAG
+  sections; ST [RM0037](https://www.st.com/resource/en/reference_manual/cd00234622.pdf)
+  for the SPC560B family: 16 KiB SHADOW, 8 KiB user portions of the two test/OTP
+  arrays, ECC width, censorship configuration, and low/mid/high block selectors.
+- NXP support's [CENSOR_CTRL sequence](https://community.nxp.com/t5/MPC5xxx/SPC5646-uncensoring-device-via-JTAG/m-p/1392647/highlight/true):
+  hold reset, supply password with enable bit, then release reset.
+- NXP [AN12092](https://www.nxp.com/docs/en/application-note/AN12092.pdf), figures
+  1 and 3: MPC5748 UTEST/password map, 256-bit lengths, OTP restriction, and
+  ordinary/HSM flash block mapping. PASS register input is distinct from JTAG scan input.
+- ST [RM0452](https://www.st.com.cn/resource/en/reference_manual/rm0452-spc58-h-line--32-bit-power-architecture-automotive-mcu-triple-z4-cores-200-mhz-10-mbytes-flash-hsm-asild-stmicroelectronics.pdf),
+  table 14: SPC58H password offsets. The full download could not be retrieved in
+  this environment; the indexed table confirms slot addresses, not JTAG wire order.
+- ST [DS12304](https://www.st.com/resource/en/datasheet/spc58nh92e7.pdf), flash
+  tables and core availability; ST's [automotive OpenOCD source](https://github.com/STMicroelectronics/OpenOCD/tree/openocd-automotive-mcu-r1),
+  `spc58xh.c` and target configuration: H-line sector mapping, boot core and
+  Nexus attributes. Parameters were cross-checked; no upstream algorithm blobs
+  or proprietary PCP files are included.
+- PEmicro [SPC58 password discussion](https://www.pemicro.com/forums/forum_topic.cfm?forum_id=10&forum_topic_id=8700)
+  confirms 256-bit passwords and separate security settings. Its UI is not evidence
+  that OTP supports erase.
+
+C55 serial password order/reset timing, HSM quiescence/ownership, and complete
+security-policy activation need reference-manual confirmation and separate bench
+validation. Those functions are not represented as completed support.

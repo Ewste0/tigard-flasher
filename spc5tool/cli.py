@@ -15,10 +15,12 @@ from .idcode import read_idcode
 from .mpsse import MpsseTransport, DEFAULT_URL
 from .session import TargetSession
 from .spi import SpiNor, PARTS
+from .security import parse_password, password_address, provision
 
 ALIASES = {"mpc5607b": "spc560b64", "spc560b64l3": "spc560b64",
+           "mpc5605b": "spc560b54", "mpc5606b": "spc560b60",
            "mpc5748g": "spc5748g", "spc5748gsmmj6": "spc5748g", "spc58nh": "spc58nh92"}
-MUTATING = {"write", "erase", "program"}
+MUTATING = {"write", "erase", "program", "install-password"}
 
 
 def integer(value):
@@ -66,7 +68,9 @@ def _info(args):
         emit({"part": chip.part, "nxp_profile": chip.nxp_twin, "core": chip.core,
               "jtag_ir_bits": chip.jtagc_irlen, "hardware_validated": False,
               "blocks": [{"name": b.name, "address": f"0x{b.address:08x}", "size": b.size,
-                          "selector_bank": b.bank, "selector_mask": f"0x{b.mask:08x}"} for b in blocks_for(chip)]})
+                          "selector_bank": b.bank, "selector_mask": f"0x{b.mask:08x}",
+                          "kind": b.kind, "writable": b.writable} for b in blocks_for(chip)],
+              "password_bits": chip.password_bits, "program_unit": chip.program_unit})
     return 0
 
 
@@ -80,19 +84,25 @@ def backend(args):
             flash.close()
     else:
         with TargetSession(chips.get(args.chip), args.url, args.freq, args.expect_idcode,
-                           reset_pin=args.reset_pin) as session:
+                           reset_pin=args.reset_pin,
+                           password=parse_password(chips.get(args.chip), args.password_file.read_text()) if getattr(args, "password_file", None) else None) as session:
             print(f"Connected: IDCODE=0x{session.idcode.raw:08x}; target reset and halted.", file=sys.stderr)
             yield session.flash
 
 
 def _operation(args):
     if not args.spi and chips.get(args.chip).read_only and args.action in MUTATING:
-        raise ValueError("SPC58NH92 supports DFLASH reading only; write, program and erase are disabled")
+        raise ValueError("Selected target is a read-only profile")
     data = Path(args.file).read_bytes() if args.action in ("write", "program", "verify") else None
     size = len(data) if data is not None else args.length
     blocks = _blocks(args, args.address, size, whole=args.action == "erase")
-    if args.action == "program" and not args.spi and (args.address % 8 or size % 8):
-        raise ValueError("MCU program requires an aligned address and length divisible by eight")
+    if not args.spi and args.action in MUTATING:
+        Flash._check_blocks(blocks, erase=args.action == "erase")
+        if args.action == "write" and any(b.kind == "otp" for b in blocks):
+            raise ValueError("OTP requires program, not erase/preserve/write")
+        unit = chips.get(args.chip).program_unit
+        if args.action == "program" and (args.address % unit or size % unit):
+            raise ValueError(f"MCU program requires complete aligned {unit}-byte ECC units")
     plan = {"target": args.chip, "operation": args.action, "address": f"0x{args.address:08x}",
             "bytes": size, "blocks": [{"name": b.name, "address": f"0x{b.address:08x}", "size": b.size} for b in blocks],
             "preserve_outside_image": args.action == "write", "hardware_validated": False}
@@ -119,6 +129,8 @@ def _operation(args):
             plan["sha256"] = sha256(data)
         elif args.action == "verify":
             flash.verify(args.address, data)
+        elif args.action == "blank":
+            flash.verify(args.address, b"\xff" * size)
         elif args.action == "write":
             flash.patch(args.address, data, backup)
         elif args.action in ("erase", "program"):
@@ -129,8 +141,38 @@ def _operation(args):
                 flash.program(args.address, data)
     plan["executed"] = True
     plan["mode"] = "hardware"
-    if args.action in MUTATING or args.action == "verify":
+    if args.action in MUTATING or args.action in ("verify", "blank"):
         plan["verified"] = True
+    emit(plan)
+    return 0
+
+
+def _password_operation(args):
+    chip = chips.get(args.chip)
+    if args.action == "authenticate":
+        if not args.password_file:
+            raise ValueError("authenticate requires --password-file")
+        with backend(args):
+            emit({"target": args.chip, "operation": args.action, "executed": True,
+                  "message": "Password supplied; debug session opened. An uncensored target cannot validate the password."})
+        return 0
+    if chip.algorithm not in ("c90-b", "c55-mpc5748", "c55-spc58h"):
+        raise ValueError("Password provisioning awaits this family's verified security map")
+    data = parse_password(chip, args.new_password_file.read_text(), installing=True)
+    address = password_address(chip, args.slot)
+    plan = {"target": args.chip, "operation": args.action, "slot": args.slot,
+            "address": f"0x{address:08x}", "bytes": len(data), "executed": False,
+            "note": "Preserves protection settings; does not activate censorship. OTP passwords cannot be replaced."}
+    if not args.execute:
+        emit(plan)
+        return 0
+    if not args.backup or args.backup.exists():
+        raise ValueError("--execute requires --backup NEW_DIRECTORY")
+    if args.expect_idcode is None:
+        raise ValueError("live modification requires --expect-idcode")
+    with backend(args) as flash:
+        provision(flash, data, lambda originals: save_backup(args.backup, args.chip, originals), slot=args.slot)
+    plan.update(executed=True, verified=True)
     emit(plan)
     return 0
 
@@ -163,6 +205,7 @@ def _connection(parser):
     parser.add_argument("--url", default=DEFAULT_URL)
     parser.add_argument("--freq", type=integer, default=500000, help="TCK/SPI clock in Hz")
     parser.add_argument("--expect-idcode", type=integer, help="require this exact JTAG IDCODE (live MCU writes)")
+    parser.add_argument("--password-file", type=Path, help="current JTAG password in a local hex-text file; never printed")
     parser.add_argument("--reset-pin", choices=("srst", "trst"), default="srst",
                         help="Tigard lead connected to MCU RESET; the other reset lead stays high for JCOMP")
 
@@ -175,17 +218,29 @@ def _commands(sub, spi=False):
     _common(probe, spi)
     _connection(probe)
     probe.set_defaults(func=_probe, action="probe", execute=False)
-    for action in ("plan", "read", "verify", "write", "program", "erase"):
+    if not spi:
+        for action in ("authenticate", "install-password"):
+            p = sub.add_parser(action, help="open a password session" if action == "authenticate" else "install a password while preserving protection settings")
+            _common(p, spi)
+            _connection(p)
+            if action == "install-password":
+                p.add_argument("--new-password-file", required=True, type=Path, help="new password in a local hex-text file; never printed")
+                p.add_argument("--slot", choices=("jtag", "group0", "group1", "group2", "group3"), default="jtag")
+                p.add_argument("--execute", action="store_true")
+                p.add_argument("--backup", type=Path)
+            p.set_defaults(func=_password_operation, action=action)
+    for action in ("plan", "read", "verify", "blank", "write", "program", "erase"):
         p = sub.add_parser(action, help={"write": "back up, preserve, erase, program and verify a binary patch",
                                         "program": "program an already-erased range and verify",
-                                        "erase": "back up and erase whole blocks; blank-check",
+                                        "erase": "erase whole blocks; SHADOW preserves configuration; OTP cannot erase",
                                         "plan": "inspect affected blocks without opening USB",
-                                        "read": "dump main/data flash to a new binary file",
+                                        "read": "dump a mapped region to a new binary file",
+                                        "blank": "check that every byte in the range reads FF",
                                         "verify": "compare flash with a binary file"}[action])
         _common(p, spi)
         _connection(p)
         p.add_argument("--address", required=True, type=integer, help="physical address (not file offset)")
-        if action in ("read", "erase", "plan"):
+        if action in ("read", "erase", "plan", "blank"):
             p.add_argument("--length", required=True, type=integer)
         if action in ("read", "write", "program", "verify"):
             p.add_argument("file", help="raw binary input/output")

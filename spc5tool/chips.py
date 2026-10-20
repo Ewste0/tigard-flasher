@@ -1,13 +1,12 @@
 """Device descriptors. Executable erase geometry lives in geometry.py.
 
-Addresses are based on the local manuals/device header. MPC5748G sample and
-configuration reads have been exercised; hardware erase/programming and other
-MCU profiles remain unvalidated. Legacy unlock metadata is descriptive;
-the driver does not implement password authentication or security provisioning.
+Addresses and capabilities are explicit per family. See docs/VALIDATION.md
+for sources and the limited MPC5748G bench record. New OTP, shadow, password,
+and SPC58 programming paths have offline verification only.
 """
 
 from __future__ import annotations
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 # JEDEC bank-0 manufacturer id for NXP/Freescale is 0x00E, so the low 12 bits of a
 # valid 1149.1 IDCODE (manufacturer<<1 | 1) are 0x01D.
@@ -20,6 +19,8 @@ class FlashRegion:
     base: int
     size: int
     note: str = ""
+    kind: str = "flash"
+    writable: bool = True
 
 
 @dataclass(frozen=True)
@@ -43,6 +44,11 @@ class Chip:
     core_selectors: tuple = ()
     nexus_access: int = 0
     idcodes: tuple = ()
+    algorithm: str = "c90-b"
+    program_unit: int = 8
+    password_bits: int = 64
+    watchdogs: tuple = (0xFFF38000,)
+    buffering: tuple = ((0xC3F8801C, 0x19), (0xC3F88020, 1))
 
 
 SPC560B64 = Chip(
@@ -62,7 +68,9 @@ SPC560B64 = Chip(
                     "Low0-5:1x32k,2x16k,2x32k,1x128k; Mid0-1:2x128k; High0-7:8x128k"),
         FlashRegion("DFLASH", 0x00800000, 0x00010000, "Low0-3: 4x16k"),
         FlashRegion("SHADOW", 0x00200000, 0x00004000,
-                    "*** NEVER erase blank: self-censors, locks JTAG ***"),
+                    "Contains password and boot configuration; preserve valid censorship words.", "shadow"),
+        FlashRegion("CFLASH_OTP", 0x00400000, 0x2000, "8 KiB user OTP; no erase", "otp"),
+        FlashRegion("DFLASH_OTP", 0x00C00000, 0x2000, "8 KiB user OTP; no erase", "otp"),
     ),
     unlock={
         # host writes these to the CFLASH controller before erase/program
@@ -87,6 +95,9 @@ SPC5748G = Chip(
     once_irlen=10,
     has_jcomp=True,
     has_mmu=True,
+    algorithm="c55-mpc5748", password_bits=256,
+    watchdogs=(0xFC050000, 0xFC054000, 0xFC058000),
+    buffering=((0xFC030000, 0x51), (0xFC030004, 0x51), (0xFC030018, 0x51)),
     read_presets=(
         {"key": "config", "name": "Config only · 32 KiB", "address": 0x00FA8000, "size": 0x8000, "filename": "MPC5748G_Config"},
         {"key": "full", "name": "Full flash · 5.94 MiB", "address": 0x00F90000, "size": 0x005F0000, "filename": "MPC5748G_Full"},
@@ -98,10 +109,11 @@ SPC5748G = Chip(
         FlashRegion("CFLASH", 0x00F90000, 0x005F0000,
                     "small 0x00F90000-0x00FFFFFF (8x16k,6x32k,2x64k) + 22x256k @0x01000000+"),
         FlashRegion("UTEST", 0x00400000, 0x00004000,
-                    "OTP: JTAG pw 0x400120, group pw 0x400140/160/180/1A0, DCF @0x400300"),
-        FlashRegion("BAF", 0x00404000, 0x00004000, "Boot Assist Flash"),
-        FlashRegion("HSMData", 0x00F80000, 0x00008000, ""),
-        FlashRegion("HSMCode", 0x00610000, 0x00024000, "+ small block 0x00F8C000"),
+                    "OTP: passwords and DCF records. Program erased ECC units only.", "otp"),
+        FlashRegion("BAF", 0x00404000, 0x00004000, "Factory Boot Assist Flash", "rom", False),
+        FlashRegion("HSMData", 0x00F80000, 0x00008000, "Security-dependent access; write backend unavailable", "security", False),
+        FlashRegion("HSMCode", 0x00610000, 0x00020000, "Two 64 KiB blocks; write backend unavailable", "security", False),
+        FlashRegion("HSMCodeSmall", 0x00F8C000, 0x00004000, "Separate HSM code block; write backend unavailable", "security", False),
     ),
     unlock={
         # C55 FMC register offsets from FMC base (struct C55FMC_tag, MPC5748G.h)
@@ -121,7 +133,7 @@ SPC5748G = Chip(
         "JCOMP must be driven HIGH to enable the JTAGC.",
         "Censored or PASS-protected devices require authentication not implemented here.",
         "ERASE must write SEL0-3 (+0x38..) not just LOCK0-3 (+0x10..) or nothing erases.",
-        "UTEST, BAF, HSM, DCF and lifecycle modifications are excluded.",
+        "UTEST supports program-once; BAF and HSM are read-only in this driver.",
     ),
 )
 
@@ -130,21 +142,45 @@ SPC5748G = Chip(
 # MPC5748G peripheral setup to this device. DFLASH range also matches the
 # user's ST_SPC58NH92_1x32x64k_DFlash.pcp. No proprietary loader is executed.
 SPC58NH92 = Chip(
-    key="spc58nh92", part="SPC58NH92", nxp_twin="ST SPC58NH · DFLASH read only",
+    key="spc58nh92", part="SPC58NH92", nxp_twin="ST SPC58NH · 10 MiB code + 256 KiB data",
     family="Chorus H-line", core="3x e200z4 · boot core 2",
     jtagc_irlen=6, once_irlen=10, has_jcomp=True, has_mmu=True,
+    algorithm="c55-spc58h", program_unit=16, password_bits=256,
+    watchdogs=(0xF4058000,), buffering=(),
     sram_base=0x40028000, flash_ctrl={"FMC": 0xF7FE0000, "SWT": 0xF4058000},
-    regions=(FlashRegion("DFLASH", 0x00800000, 0x40000, "256 KiB · read only"),),
-    read_only=True, core_selectors=(0x2A,), nexus_access=3 << 22,
+    regions=(FlashRegion("DFLASH", 0x00800000, 0x40000, "4 × 64 KiB"),
+             FlashRegion("CFLASH", 0x00FC0000, 0xA00000, "10 MiB; 128-bit ECC programming"),
+             FlashRegion("UTEST", 0x00400000, 0x4000, "OTP; passwords and DCF records", "otp"),
+             FlashRegion("BAF", 0x00404000, 0x4000, "Factory boot firmware", "rom", False),
+             FlashRegion("HSMCode", 0x00608000, 0x30000, "HSM access depends on security configuration; write backend unavailable", "security", False),
+             FlashRegion("HSMData", 0x00680000, 0x8000, "HSM access depends on security configuration; write backend unavailable", "security", False)),
+    core_selectors=(0x2A, 0x28, 0x29), nexus_access=3 << 22,
     idcodes=(0x01146041,),
     read_presets=({"key": "dflash", "name": "DFLASH only · 256 KiB", "address": 0x00800000,
-                   "size": 0x40000, "filename": "SPC58NH92_DFLASH"},),
-    notes=("Hardware read support has not yet been tested on an SPC58NH92.",
-           "Only DFLASH is exposed; erase, write and program are disabled.",
+                   "size": 0x40000, "filename": "SPC58NH92_DFLASH"},
+                  {"key": "cflash", "name": "CFLASH · 10 MiB", "address": 0xFC0000,
+                   "size": 0xA00000, "filename": "SPC58NH92_CFLASH"}),
+    notes=("SPC58NH hardware validation pending; register sequences tested offline.",
+           "UTEST cannot be erased; each ECC unit can be programmed only once.",
            "14-pin connector follows the user's MPC5748G wiring reference."),
 )
 
-CHIPS = {c.key: c for c in (SPC560B64, SPC5748G, SPC58NH92)}
+def _bolero_variant(key, part, twin, size):
+    return replace(SPC560B64, key=key, part=part, nxp_twin=twin,
+                   core_selectors=(0x11,), regions=(
+                       replace(SPC560B64.regions[0], size=size, note="RM0037 device-specific code flash capacity"),
+                       *SPC560B64.regions[1:]))
+
+
+SPC560B54 = _bolero_variant("spc560b54", "SPC560B54", "MPC5605B", 0xC0000)
+SPC560B60 = _bolero_variant("spc560b60", "SPC560B60", "MPC5606B", 0x100000)
+SPC58EH92 = replace(SPC58NH92, key="spc58eh92", part="SPC58EH92",
+                    nxp_twin="ST SPC58EH · 10 MiB code + 256 KiB data",
+                    core="2x e200z4 · boot core 2", core_selectors=(0x2A, 0x28),
+                    read_presets=tuple({**p, "filename": p["filename"].replace("NH", "EH")}
+                                       for p in SPC58NH92.read_presets))
+
+CHIPS = {c.key: c for c in (SPC560B64, SPC560B54, SPC560B60, SPC5748G, SPC58NH92, SPC58EH92)}
 
 
 def get(key: str) -> Chip:

@@ -16,7 +16,10 @@ Screenshot uses generated test bytes; no firmware or connected target is shown.
 
 ## Features
 
-- Read, write, verify, erase, and blank-check supported profiles; SPC58NH92 is read only.
+- Read, patch write, program, verify, erase, and blank check for supported flash regions.
+- OTP read, program once, verify, and blank check; SHADOW writes preserve valid configuration.
+- Family-specific password lengths, SPC560 JTAG authentication, and password installation.
+  C55 JTAG authentication and HSM programming remain unavailable; see [security operations](docs/SECURITY_OPERATIONS.md).
 - MPC5748G **Config only** default: 32 KiB at `0x00FA8000`. Full-array and custom ranges are selectable.
 - Continuous virtualized hex/ASCII viewer for raw binaries up to 16 MiB, offset navigation,
   named saves, SHA-256, drag-and-drop, and cancellable reads.
@@ -24,16 +27,20 @@ Screenshot uses generated test bytes; no firmware or connected target is shown.
 - Reviewed write plans, original-block backups with checksums, preserved bytes outside
   a patch, and automatic verification.
 
-| Profile | Exposed flash | Hardware evidence |
+| Profile | Main and data flash | Additional regions |
 | --- | --- | --- |
-| `mpc5748g` / `spc5748g` | 6080 KiB main CFLASH at `0x00F90000`; config preset within it | Config reads and one 16 KiB block write verified; full-array read/write untested |
-| `spc560b64` / `mpc5607b` | 1536 KiB CFLASH at `0`; 64 KiB DFLASH at `0x00800000` | Offline only |
-| `spc58nh92` | 256 KiB DFLASH at `0x00800000`, **read only** | Offline only |
-| SPI `w25q128jv` | 16 MiB; JEDEC `EF4018` | Offline only |
+| `mpc5748g` / `spc5748g` | 6080 KiB CFLASH; 32 KiB config default | 16 KiB UTEST OTP; BAF and separate HSM ranges read-only |
+| `spc560b54` / `mpc5605b` | 768 KiB CFLASH, 64 KiB DFLASH | 16 KiB SHADOW, 8 KiB CFLASH_OTP, 8 KiB DFLASH_OTP |
+| `spc560b60` / `mpc5606b` | 1024 KiB CFLASH, 64 KiB DFLASH | Same SHADOW and OTP regions as B54 |
+| `spc560b64` / `mpc5607b` | 1536 KiB CFLASH, 64 KiB DFLASH | Same SHADOW and OTP regions as B54 |
+| `spc58nh92`, `spc58eh92` | 10 MiB CFLASH, 256 KiB DFLASH | 16 KiB UTEST OTP; BAF and HSM read-only |
+| SPI `w25q128jv` | 16 MiB; JEDEC `EF4018` | SPI security registers are not supported |
 
-Profiles are explicit. An IDCODE does not establish the exact part or its geometry.
-“Full flash” means the exposed main array, not shadow, UTEST, lifecycle, HSM, or
-every physical memory on the device. No security-unlock algorithm is included.
+Only one MPC5748 configuration-block write has hardware evidence. New profiles,
+OTP, SHADOW, passwords, and SPC58 programming have offline tests only. Profiles
+are explicit: an IDCODE does not establish the exact part or its geometry.
+“Full flash” selects the main array; additional regions must be selected separately.
+Access still depends on the target's protection and lifecycle state.
 
 ## Install and run
 
@@ -97,8 +104,22 @@ Use raw `.bin` images, not PCP, HEX, S-records, executables, or simulator archiv
 `--execute --backup NEW_DIRECTORY`; live MCU modification also needs
 `--expect-idcode` matching the target. `write` backs up affected blocks, preserves
 unmodified bytes, erases changed blocks, programs, and verifies. `program` is only
-for already-erased flash; MCU addresses and sizes must align to eight bytes.
-`erase` requires whole blocks. SPC58NH92 rejects all mutation commands.
+for already-erased flash; alignment is 8 bytes on SPC560/MPC5748 and 16 bytes on
+SPC58H. `erase` requires whole blocks and cannot erase OTP. SHADOW erase restores
+its security/boot configuration tail before returning; only its user area is left blank.
+
+For OTP, select its region and use **Program once** after loading the binary.
+The tool checks the input range, saves the original block, requires erased input
+units, programs, and verifies. **Blank check** means every requested byte reads FF;
+it cannot prove an ECC unit has never been programmed by another tool. Never
+reuse a programmed OTP unit. Backups cannot undo an OTP write.
+
+Password lengths are **16 hex digits / 64 bits** for the SPC560B profiles and
+**64 hex digits / 256 bits / 32 bytes** for MPC5748G and SPC58H. CLI commands use
+`--password-file` and `install-password --new-password-file`, avoiding secrets in
+command arguments. Password installation preserves protection settings; it does
+not enable censorship. See [security operations](docs/SECURITY_OPERATIONS.md) for
+capabilities, input order, source references, and examples.
 
 The shipped application supports live hardware only. `info` and `plan` inspect
 geometry without USB. Automated tests inject device models from `tests/` and

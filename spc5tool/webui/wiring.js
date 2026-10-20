@@ -3,8 +3,8 @@
 // The 14-pin target layout follows the user's MPC5748G connector reference.
 function wiringGuide(key, resetPin = "srst") {
   if (!["srst", "trst"].includes(resetPin)) throw new Error("Unknown reset lead");
-  const mpc = key === "spc5748g" || key === "spc58nh92", spi = key === "w25q128jv";
-  const mini = key === "spc560b64";
+  const mpc = key === "spc5748g" || ["spc58nh92", "spc58eh92"].includes(key), spi = key === "w25q128jv";
+  const mini = ["spc560b54", "spc560b60", "spc560b64"].includes(key);
   const reset = resetPin === "trst" ? [7, "TRST", "BD4"] : [8, "SRST", "BD5"];
   const jcomp = resetPin === "trst" ? [8, "SRST", "BD5"] : [7, "TRST", "BD4"];
   const wire = (id, adapter, pins, signal, note) => ({id, adapterPin:adapter[0], adapter:adapter[1], gpio:adapter[2], pins, signal, note});
@@ -32,7 +32,7 @@ function wiringGuide(key, resetPin = "srst") {
     : mini ? [[1,"TVCC"],[2,"TMS"],[3,"GND"],[4,"TCK"],[5,"GND"],[6,"TDO"],[7,"NC"],[8,"TDI"],[9,"JTAG_MOD / NC*"],[10,"RESET"]] : [];
   return {spi, mpc, mini, rows, pins, resetLead:reset[1], jcompLead:jcomp[1],
     reference: mpc ? "/assets/jtag-14pin.svg" : mini ? "/assets/spc560-10pin.svg" : null,
-    title: spi ? "SPI flash · 8-pin package" : mpc ? `${key === "spc58nh92" ? "SPC58NH92" : "MPC5748G"} · 14-pin JTAG` : "SPC560B64 · 10-pin JTAG",
+    title: spi ? "SPI flash · 8-pin package" : mpc ? `${key === "spc5748g" ? "MPC5748G" : key.toUpperCase()} · 14-pin JTAG reference` : `${key.toUpperCase()} · 10-pin JTAG reference`,
     orientation: spi ? "Package top view. Pin 1 is beside the dot; numbering runs counterclockwise."
       : mpc || mini ? "Same orientation as your reference: pin 1 upper left, pin 2 upper right. This is not a mirrored cable view."
       : "Locate these signals in your board schematic. No connector numbering is assumed for this target."};

@@ -11,7 +11,7 @@ session's `--reset-pin` option. Connector pictures are reference layouts, not
 universal MCU package pinouts. Pin 1 is upper left and pin 2 upper right in these
 drawings; viewing the mating side can mirror the connector.
 
-## MPC5748G and SPC58NH92 — 14-pin reference
+## MPC5748G and SPC58NH92/EH92 — 14-pin reference
 
 ![14-pin reference](../spc5tool/webui/assets/jtag-14pin.svg)
 
@@ -31,14 +31,16 @@ goes to target RESET, pin 7 to JCOMP. **JCOMP is separate from reset.** Unused
 target pins in this reference are 7, 8, and 13. The SPC58NH92 mapping follows the
 same connector reference, but has not been bench-tested with this tool.
 
-## SPC560B64 — 10-pin reference
+## SPC560B54/B60/B64 — 10-pin reference
 
 ![10-pin reference](../spc5tool/webui/assets/spc560-10pin.svg)
 
 Target 1 = VTGT, 2 = TMS, 3/5 = GND, 4 = TCK, 6 = TDO, 7 = NC,
 8 = TDI, 9 = JTAG_MOD/NC, 10 = RESET. Target pin 9 is not assigned to JCOMP
 and is not driven by this guide. Connect the selected Tigard reset lead to pin 10.
-No SPC560B64 hardware validation is claimed.
+B54/B60 use this connector drawing as a board reference only. Verify your actual
+board connector; it is not guaranteed by the MCU part number. No SPC560 hardware
+validation is claimed.
 
 ## SPI W25Q128JV
 

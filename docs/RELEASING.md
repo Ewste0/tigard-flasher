@@ -44,7 +44,7 @@ Windows/Linux jobs have not run merely because their workflow exists.
 ## Versioned release
 
 Update `spc5tool/__init__.py`, the changelog, and validation notes. Review the diff,
-run all checks, commit, then tag the intended commit (for example `v0.4.0`).
+run all checks, commit, then tag the intended commit (for example `v0.5.0`).
 Pushing a `v*` tag runs the CI jobs and packages wheel/sdist artifacts; it does
 not publish to PyPI or create a public GitHub Release automatically. Download
 the successful CI artifact or use the locally checked `dist/` files, then create

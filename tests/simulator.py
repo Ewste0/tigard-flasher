@@ -11,8 +11,8 @@ from spc5tool.memory import WordMemory
 class SimMemory(WordMemory):
     def __init__(self, chip):
         self.chip = chip
-        self.regions = {r.base: bytearray(b"\xff" * r.size) for r in chip.regions if r.name in ("CFLASH", "DFLASH")}
-        self.c55 = chip.key in ("spc5748g", "spc58nh92")
+        self.regions = {r.base: bytearray(b"\xff" * r.size) for r in chip.regions}
+        self.c55 = chip.algorithm.startswith("c55")
         bases = (chip.flash_ctrl["FMC"],) if self.c55 else (0xC3F88000, 0xC3F8C000)
         self.controllers = {b: {"mcr": 0x600, "pending": {}, "interlock": None,
                                 "regs": {}, "keys": set()} for b in bases}
@@ -24,6 +24,13 @@ class SimMemory(WordMemory):
         self.blocks = []
         if chip.read_only:
             pass  # No simulated erase/program geometry for the read-only window.
+        elif chip.algorithm == "c55-spc58h":
+            starts = (0xFC0000, 0xFC4000, 0xFC8000, 0xFCC000, 0xFD0000, 0xFD8000, 0xFE0000, 0xFF0000, 0x1000000)
+            masks = (19, 17, 20, 18, 22, 23, 24, 25)
+            self.blocks += [(a, b-a, 0xF7FE0000, 0x38, bit) for a,b,bit in zip(starts, starts[1:], masks)]
+            self.blocks += [(0x1000000 + i * 0x20000, 0x20000, 0xF7FE0000, 0x40, i) for i in range(2)]
+            self.blocks += [(0x1040000 + i * 0x40000, 0x40000, 0xF7FE0000, 0x40 if i < 30 else 0x44, (i + 2) % 32) for i in range(38)]
+            self.blocks += [(0x800000 + i * 0x10000, 0x10000, 0xF7FE0000, 0x3C, i) for i in range(4)]
         elif self.c55:
             entries = [(0xF90000 + n * 0x4000, 0x4000, n) for n in range(8)]
             entries += [(0xFB0000, 0x8000, 8), (0xFB8000, 0x8000, 9)]
@@ -37,6 +44,12 @@ class SimMemory(WordMemory):
                             for n, (a, b) in enumerate(zip(starts, starts[1:]))]
             self.blocks += [(0x80000 + n * 0x20000, 0x20000, 0xC3F88000, 0x14, n) for n in range(8)]
             self.blocks += [(0x800000 + n * 0x4000, 0x4000, 0xC3F8C000, 0x10, n) for n in range(4)]
+            self.blocks += [(0x200000, 0x4000, 0xC3F88000, 0x10, 20),
+                            (0x400000, 0x2000, 0xC3F88000, 0x10, 20),
+                            (0xC00000, 0x2000, 0xC3F8C000, 0x10, 20)]
+            self.regions[0x200000][0x3DD8:0x3DE8] = bytes.fromhex('FEEDFACECAFEBEEF55AA55AA55AA55AA')
+        if self.c55:
+            self.blocks += [(0x400000, 0x4000, chip.flash_ctrl['FMC'], 0x38, 31)]
         for base, c in self.controllers.items():
             locks = (0x10, 0x14, 0x18, 0x1C) if self.c55 else ((4, 12) if base == 0xC3F8C000 else (4, 8, 12))
             selectors = (0x38, 0x3C, 0x40, 0x44) if self.c55 else ((0x10,) if base == 0xC3F8C000 else (0x10, 0x14))
@@ -122,18 +135,23 @@ class SimMemory(WordMemory):
             for b in self.blocks:
                 a, size, ctrl, offset, bit = b
                 if ctrl == base and c["regs"][offset] & (1 << bit) and self._unlocked(b):
+                    if a in (0x400000, 0xC00000):
+                        continue  # OTP physically ignores erase.
+                    if not self.c55 and a == 0x200000 and not 0x200000 <= c['interlock'] < 0x204000:
+                        continue
                     data, start = self._region(a, size)
                     data[start:start + size] = b"\xff" * size
         elif good and c["mcr"] & 0x10:
             address = c["interlock"]
             block = next(b for b in self.blocks if b[0] <= address < b[0] + b[1])
-            good = address % 8 == 0 and set(c["pending"]) == {address, address + 4} and self._unlocked(block)
+            unit = 16 if self.chip.algorithm == 'c55-spc58h' else 8
+            good = address % unit == 0 and set(c["pending"]) == set(range(address, address + unit, 4)) and self._unlocked(block)
             if good:
-                data, start = self._region(address, 8)
-                payload = b"".join(c["pending"][address + n].to_bytes(4, "big") for n in (0, 4))
-                good = data[start:start + 8] == b"\xff" * 8
+                data, start = self._region(address, unit)
+                payload = b"".join(c["pending"][address + n].to_bytes(4, "big") for n in range(0, unit, 4))
+                good = data[start:start + unit] == b"\xff" * unit
                 if good:
-                    data[start:start + 8] = payload
+                    data[start:start + unit] = payload
                     if self.fault == "corrupt":
                         data[start] ^= 1
         c["mcr"] |= 0x400 | (0x200 if good else 0)

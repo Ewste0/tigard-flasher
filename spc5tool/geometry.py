@@ -2,7 +2,8 @@
 
 Sources: MPC5607BRM rev 7.1 tables 30-2/3, figures 30-4/10;
 AN12092 figure 3 (MPC5748G), MPC5748G.h C55FMC register layout.
-Security, test, HSM, BAF and shadow blocks are intentionally absent.
+ST DS12304 and automotive OpenOCD supply SPC58H geometry. OTP and shadow
+are separate capabilities; factory BAF/HSM descriptors are read-only.
 """
 from dataclasses import dataclass
 
@@ -16,6 +17,8 @@ class Block:
     controller: int
     bank: int
     mask: int
+    kind: str = "flash"
+    writable: bool = True
 
     @property
     def end(self):
@@ -24,7 +27,7 @@ class Block:
 
 def blocks_for(chip):
     blocks = []
-    if chip.key == "spc560b64":
+    if chip.algorithm == "c90-b":
         address = 0
         for i, size in enumerate((0x8000, 0x4000, 0x4000, 0x8000, 0x8000, 0x20000)):
             blocks.append(Block(f"CFLASH.L{i}", "CFLASH", address, size, 0xC3F88000, 0, 1 << i))
@@ -33,12 +36,17 @@ def blocks_for(chip):
             # MSL/MLK are bits 17:16, NOT bits 7:6.
             blocks.append(Block(f"CFLASH.M{i}", "CFLASH", 0x40000 + i * 0x20000,
                                 0x20000, 0xC3F88000, 0, 1 << (16 + i)))
-        for i in range(8):
+        for i in range((chip.regions[0].size - 0x80000) // 0x20000):
             blocks.append(Block(f"CFLASH.H{i}", "CFLASH", 0x80000 + i * 0x20000,
                                 0x20000, 0xC3F88000, 1, 1 << i))
         for i in range(4):
             blocks.append(Block(f"DFLASH.L{i}", "DFLASH", 0x800000 + i * 0x4000,
                                 0x4000, 0xC3F8C000, 0, 1 << i))
+        blocks.extend((
+            Block("SHADOW", "SHADOW", 0x200000, 0x4000, 0xC3F88000, 0, 1 << 20, "shadow"),
+            Block("CFLASH_OTP", "CFLASH_OTP", 0x400000, 0x2000, 0xC3F88000, 0, 1 << 20, "otp"),
+            Block("DFLASH_OTP", "DFLASH_OTP", 0xC00000, 0x2000, 0xC3F8C000, 0, 1 << 20, "otp"),
+        ))
     elif chip.key == "spc5748g":
         small = [(0xF90000 + i * 0x4000, 0x4000, i) for i in range(8)]
         small += [(0xFB0000, 0x8000, 8), (0xFB8000, 0x8000, 9)]
@@ -49,13 +57,35 @@ def blocks_for(chip):
         for i in range(22):
             blocks.append(Block(f"CFLASH.B{i}", "CFLASH", 0x1000000 + i * 0x40000,
                                 0x40000, 0xFFFE0000, 2, 1 << i))
-    elif chip.key == "spc58nh92":
-        # One readable window, NOT an erase-sector description. There are no
-        # unlock/erase masks; all modifying entry points reject this profile.
-        blocks.append(Block("DFLASH (read only)", "DFLASH", 0x00800000, 0x40000, 0xF7FE0000, 0, 0))
+    elif chip.algorithm == "c55-spc58h":
+        base = chip.flash_ctrl["FMC"]
+        for i in range(4):
+            blocks.append(Block(f"DFLASH.H{i}", "DFLASH", 0x800000 + i * 0x10000,
+                                0x10000, base, 1, 1 << i))
+        address = 0xFC0000
+        for i, (size, bit) in enumerate(zip((0x4000,) * 4 + (0x8000,) * 2 + (0x10000,) * 2,
+                                           (19, 17, 20, 18, 22, 23, 24, 25))):
+            blocks.append(Block(f"CFLASH.L{i}", "CFLASH", address, size, base, 0, 1 << bit))
+            address += size
+        end = next(r.base + r.size for r in chip.regions if r.name == "CFLASH")
+        i = 0
+        while address < end:
+            size = 0x20000 if i < 2 else 0x40000
+            blocks.append(Block(f"CFLASH.B{i}", "CFLASH", address, size, base,
+                                2 + i // 32, 1 << (i % 32)))
+            address += size
+            i += 1
     else:
         raise ValueError(f"no flash algorithm for {chip.key}")
-    return tuple(blocks)
+    if chip.algorithm.startswith("c55"):
+        base = chip.flash_ctrl["FMC"]
+        for region in chip.regions:
+            if region.name in ("CFLASH", "DFLASH"):
+                continue
+            blocks.append(Block(region.name, region.name, region.base, region.size, base,
+                                0, 1 << 31 if region.name == "UTEST" else 0,
+                                region.kind, region.writable if region.name == "UTEST" else False))
+    return tuple(sorted(blocks, key=lambda b: b.address))
 
 
 def checked_range(address, size):
@@ -71,10 +101,10 @@ def select_blocks(chip, address, size, *, whole=False):
     cursor = address
     for block in selected:
         if block.address > cursor:
-            raise ValueError("range crosses unmapped or protected flash")
+            raise ValueError("range crosses unmapped flash")
         cursor = block.end
     if not selected or cursor < address + size:
-        raise ValueError("range is outside supported main/data flash; protected regions cannot be modified")
+        raise ValueError("range is outside the supported flash regions")
     if whole and (selected[0].address != address or selected[-1].end != address + size):
         raise ValueError("erase range must contain whole blocks (use 'plan' to see boundaries)")
     return selected

@@ -76,7 +76,7 @@ class OnCE:
                 raise OperationTimeout(f"core did not halt, OSR=0x{status:03x}")
             time.sleep(0.001)
 
-    def attach(self):
+    def attach(self, password=None):
         """Reset-and-halt session. Firmware is never automatically resumed."""
         cores = self.chip.core_selectors or ((0x11,) if self.chip.key == "spc560b64" else (0x28, 0x29, 0x2A))
         self.tap.reset()
@@ -84,6 +84,15 @@ class OnCE:
         self.tap.io.set_reset(srst=True)
         try:
             time.sleep(0.01)
+            if password is not None:
+                if self.chip.algorithm != "c90-b" or len(password) != 8:
+                    raise ValueError("JTAG password scan for this family is not yet verified")
+                # Input is NVPWD0 followed by NVPWD1 in memory order. The
+                # CENSOR_CTRL scan is LSB first, plus its enable bit at bit 64.
+                value = int.from_bytes(password[:4], "big") | (int.from_bytes(password[4:], "big") << 32)
+                self.tap.scan_ir(self.chip.jtagc_irlen, 7)
+                self.tap.scan_dr(65, value | (1 << 64), read=False)
+                time.sleep(0.001)
             for opcode in cores:
                 self.select(opcode)
                 self.write_register(OCR, 0x5)  # DR | WKUP while reset asserted

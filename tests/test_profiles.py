@@ -1,4 +1,4 @@
-"""Read scopes, read-only boundaries and ST-specific transport vectors."""
+"""Read scopes, region boundaries and ST-specific transport vectors."""
 import contextlib
 import io
 import tempfile
@@ -30,43 +30,43 @@ class ProfileTests(unittest.TestCase):
         memory.regions[0x800000][:] = bytes(range(256)) * 1024
         self.assertEqual(flash.read(0x800000, 0x40000), bytes(range(256)) * 1024)
         self.assertEqual(flash.read(0x83FFFD, 3), b'\xfd\xfe\xff')
-        for address, size in ((0x7FFFFF, 1), (0x83FFFF, 2), (0xFC0000, 8), (0x404000, 8)):
+        for address, size in ((0x7FFFFF, 1), (0x83FFFF, 2), (0x83FFFF, 16), (0x19C0000, 8)):
             with self.assertRaises(ValueError):
                 flash.read(address, size)
         # Reads clear only the volatile W1C errors; never unlock or select erase.
         self.assertTrue(all(entry == (0xF7FE0000, 0xC000) for entry in memory.log))
         target = next(t for t in catalog() if t['key'] == 'spc58nh92')
-        self.assertTrue(target['read_only'])
-        self.assertEqual([r['name'] for r in target['regions']], ['DFLASH'])
+        self.assertFalse(target['read_only'])
+        self.assertIn('CFLASH', [r['name'] for r in target['regions']])
 
-    def test_spc58_mutations_fail_before_memory_usb_or_backup(self):
-        memory, backup = Mock(), Mock()
-        flash = Flash(memory, SPC58NH92)
-        for method, args in ((flash.erase, (0x800000, 0x40000)), (flash.program, (0x800000, b'12345678')),
-                             (flash.patch, (0x800000, b'12345678', backup))):
-            with self.assertRaisesRegex(DriverError, 'reading only'):
-                method(*args)
-        self.assertEqual(memory.mock_calls, [])
-        backup.assert_not_called()
-        with tempfile.TemporaryDirectory() as directory, patch('spc5tool.cli.backend') as backend:
-            workspace = Workspace(directory, allow_hardware=True)
-            for action in ('write', 'erase'):
-                for mode in ('hardware',):
-                    with self.assertRaisesRegex(ValueError, 'reading only'):
-                        workspace.plan(dict(target='spc58nh92', action=action, mode=mode))
-            for action in ('write', 'program', 'erase'):
-                args = [action, 'spc58nh92', '--address', '0x800000', '--execute', '--backup', directory + '/backup']
-                args += ['--length', '0x40000'] if action == 'erase' else [directory + '/nonexistent.bin']
-                with contextlib.redirect_stderr(io.StringIO()):
-                    self.assertEqual(main(args), 2)
-            backend.assert_not_called()
+    def test_spc58_cflash_and_dflash_program_erase(self):
+        memory = SimMemory(SPC58NH92)
+        events = []
+        flash = Flash(memory, SPC58NH92, progress=lambda p,d,t: events.append((p,d/t)))
+        for address, size, selector, mask in ((0x800000, 0x10000, 0x3C, 1),
+                (0xFC0000, 0x4000, 0x38, 0x80000),
+                (0xFC4000, 0x4000, 0x38, 0x20000),
+                (0x1000000, 0x20000, 0x40, 1),
+                (0x1940000, 0x40000, 0x44, 0x40)):
+            with self.subTest(address=hex(address)):
+                flash.program(address, bytes(range(16)))
+                self.assertEqual(flash.read(address, 16), bytes(range(16)))
+                events.clear()
+                flash.erase(address, size)
+                self.assertEqual(flash.read(address, 16), b'\xff' * 16)
+                self.assertIn((0xF7FE0000 + selector, mask), memory.log)
+        before = len(memory.log)
+        with self.assertRaisesRegex(ValueError, '16-byte'):
+            flash.program(0x800000, b'12345678')
+        self.assertEqual(len(memory.log), before)
 
     def test_spc58_core2_and_nexus_attributes(self):
         tap = Mock()
         once = OnCE(tap, SPC58NH92)
         with patch.object(once, 'select') as select, patch.object(once, 'write_register'), patch.object(once, 'wait_debug', return_value=0x209):
             once.attach()
-        self.assertTrue(all(call.args == (0x2A,) for call in select.call_args_list))
+        self.assertEqual({call.args[0] for call in select.call_args_list}, {0x28, 0x29, 0x2A})
+        self.assertEqual(select.call_args_list[-1].args, (0x2A,))
         once = Mock(chip=SPC58NH92)
         once.nexus_read.side_effect = [1, 0x78563412]
         self.assertEqual(NexusMemory(once).read32(0x800000), 0x12345678)

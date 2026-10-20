@@ -294,13 +294,15 @@ class FlashTests(unittest.TestCase):
         for address, mask in ((0xF90000, 1), (0xFB0000, 0x100), (0xFC0000, 0x40000),
                               (0xFE0000, 0x400000), (0xFF0000, 0x1000000), (0x1540000, 0x200000)):
             self.assertEqual(c55[address].mask, mask)
-        self.assertEqual(sum(b.size for b in c55.values()), 0x5f0000)
+        self.assertEqual(sum(b.size for b in c55.values() if b.region == "CFLASH"), 0x5f0000)
 
     def test_every_block_program_erase_and_lock_restore(self):
         for chip in (SPC560B64, SPC5748G):
             flash, memory = self.make_flash(chip)
             locks = {base: dict(c['regs']) for base, c in memory.controllers.items()}
             for block in blocks_for(chip):
+                if block.kind != "flash" or not block.writable:
+                    continue
                 with self.subTest(chip=chip.key, block=block.name):
                     flash.program(block.address, b'\x01\x23\x45\x67\x89\xab\xcd\xef')
                     self.assertEqual(flash.read(block.address, 8), bytes.fromhex('0123456789abcdef'))
@@ -320,8 +322,8 @@ class FlashTests(unittest.TestCase):
         self.assertEqual(flash.read(0x1000000, 8), b'\xff' * 8)
 
     def test_protected_holes_alignment_and_overflow(self):
-        for chip, bad in ((SPC560B64, (0x200000, 0x400000, 0x180000)),
-                          (SPC5748G, (0x400000, 0x404000, 0xF80000, 0x610000, 0xF8C000, 0x1580000))):
+        for chip, bad in ((SPC560B64, (0x204000, 0x402000, 0x180000)),
+                          (SPC5748G, (0x3FFFF8, 0x404000, 0xF80000, 0x610000, 0xF8C000, 0x1580000))):
             flash, memory = self.make_flash(chip)
             for address in bad:
                 with self.assertRaises(ValueError):

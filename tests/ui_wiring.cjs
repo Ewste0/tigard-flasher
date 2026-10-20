@@ -72,7 +72,9 @@ async function main() {
         assert.equal(await page.$eval("#targetConnector", node => node.children.length), 14);
         assert.equal(await page.$eval("#readScope", node => node.value), "dflash");
         assert.equal(await page.$eval("#lengthInput", node => node.value), "0x00040000");
-        assert.equal(await page.$eval('[data-operation="erase"]', node => node.disabled), true);
+        assert.equal(await page.$eval('[data-operation="erase"]', node => node.disabled), false);
+        await page.select("#readScope", "cflash");
+        assert.equal(await page.$eval('[name="region"]:checked', node => node.value), "CFLASH");
         await page.select("#chipSelect", "spc5748g");
         assert.equal(await page.$eval("#readScope", node => node.value), "config");
         assert.equal(await page.$eval("#addressInput", node => node.value), "0x00FA8000");
@@ -89,6 +91,25 @@ async function main() {
         await page.$eval("#saveName", node => { node.value = "Renamed_Config.bin"; });
         await page.click("#saveButton");
         await page.waitForFunction(() => document.getElementById("fileName").textContent === "Renamed_Config.bin");
+        assert.equal(await page.$eval("#currentPassword", node => node.maxLength), 64);
+        await page.select("#chipSelect", "spc560b64");
+        assert.equal(await page.$eval("#currentPassword", node => node.maxLength), 16);
+        await page.click('[name="region"][value="CFLASH_OTP"]');
+        assert.equal(await page.$eval('[data-operation="erase"]', node => node.disabled), true);
+        assert.equal(await page.$eval('[data-operation="write"]', node => node.disabled), true);
+        assert.equal(await page.$eval('[data-operation="program"]', node => node.disabled), false);
+        assert.equal(await page.$eval('[data-operation="program"]', node => node.textContent), "Program once");
+        assert.equal(await page.$eval('[data-operation="blank"]', node => node.disabled), false);
+        // Review a plan only: no job/USB request is submitted.
+        await page.click("#settingsButton");
+        await page.type("#expectedId", "0x1234501D");
+        await page.click('#settingsDialog button[value="save"]');
+        await page.waitForFunction(() => !document.getElementById("settingsDialog").open);
+        await page.click('[data-operation="program"]');
+        await page.waitForSelector("#confirmDialog[open]");
+        assert.match(await page.$eval("#planNote", node => node.textContent), /One-time programming/);
+        await page.click('#confirmDialog .dialog-actions button[value="cancel"]');
+        if (reset === "trst") await page.screenshot({path:path.join(screenshots,"otp-desktop.png"),fullPage:true});
         assert.equal(await page.$("#demoButton"), null);
         assert.equal(await page.$("#modeSelect"), null);
         await page.select("#familySelect", "spi");

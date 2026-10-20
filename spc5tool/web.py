@@ -23,10 +23,11 @@ from .idcode import read_idcode
 from .mpsse import DEFAULT_URL, MpsseTransport
 from .session import TargetSession
 from .spi import PARTS, SpiNor
+from .security import parse_password, password_address, provision
 
 MAX_IMAGE = 16 * 1024 * 1024
-MUTATING = {"write", "erase"}
-ACTIONS = {"read", "write", "verify", "erase", "blank", "identify"}
+MUTATING = {"write", "erase", "program", "install_password"}
+ACTIONS = {"read", "write", "program", "verify", "erase", "blank", "identify", "install_password", "authenticate"}
 ASSETS = Path(__file__).with_name("webui")
 STATIC_ASSETS = {"/": ("index.html", "text/html; charset=utf-8"),
                  "/style.css": ("style.css", "text/css"),
@@ -53,7 +54,11 @@ def catalog():
         targets.append({"key": chip.key, "name": chip.part, "alias": chip.nxp_twin,
                         "protocol": "JTAG", "core": chip.core,
                         "read_only": chip.read_only, "read_presets": chip.read_presets,
-                        "regions": [asdict(r) for r in chip.regions if r.name in ("CFLASH", "DFLASH")],
+                        "program_unit": chip.program_unit, "password_bits": chip.password_bits,
+                        "password_install": chip.algorithm in ("c90-b", "c55-mpc5748", "c55-spc58h"),
+                        "password_login": chip.algorithm == "c90-b",
+                        "notes": chip.notes,
+                        "regions": [{**asdict(r), "writable": all(b.writable for b in blocks_for(chip) if b.region == r.name)} for r in chip.regions],
                         "blocks": [asdict(b) for b in blocks_for(chip)]})
     for part in PARTS.values():
         targets.append({"key": part.key, "name": part.key.upper(), "alias": "Winbond SPI NOR",
@@ -93,6 +98,7 @@ class Workspace:
         self.allow_hardware, self.url = allow_hardware, url
         self.reset_pin = reset_pin
         self.files, self.plans, self.jobs = {}, {}, {}
+        self._plan_secrets = {}
         self.lock = threading.RLock()
         self.active = None
         self.adapter_status = {"connected": False, "devices": [], "message": "Not checked"}
@@ -105,11 +111,18 @@ class Workspace:
                 return self.adapter_status
             # Enumerate USB descriptors only. No interface is claimed, and no
             # JTAG clock or reset is driven by the connection indicator.
-            from pyftdi.ftdi import Ftdi
-            from pyftdi.usbtools import UsbTools
-            UsbTools.flush_cache()
-            devices = [{"serial": d.sn, "description": d.description, "interface": interface}
-                       for d, interface in Ftdi.list_devices(self.url)]
+            try:
+                from pyftdi.ftdi import Ftdi
+                from pyftdi.usbtools import UsbTools
+                UsbTools.flush_cache()
+                devices = [{"serial": d.sn, "description": d.description, "interface": interface}
+                           for d, interface in Ftdi.list_devices(self.url)]
+            except Exception as exc:
+                # A serial-specific URL raises UsbToolsError when unplugged.
+                # Report transport/import/permission failures to the UI as well.
+                self.adapter_status = {"connected": False, "devices": [],
+                                       "message": f"Tigard unavailable: {exc}"}
+                return self.adapter_status
             self.adapter_status = {"connected": bool(devices), "devices": devices,
                                    "message": "USB adapter detected" if devices else "Tigard not found on USB"}
             return self.adapter_status
@@ -169,7 +182,7 @@ class Workspace:
         if action not in ACTIONS or mode != "hardware":
             raise ValueError("unsupported operation or mode; live hardware only")
         if target in chips.CHIPS and chips.CHIPS[target].read_only and action in MUTATING:
-            raise ValueError("SPC58NH92 supports DFLASH reading only; write and erase are disabled")
+            raise ValueError("Selected target is a read-only profile")
         frequency = number(request.get("frequency", 500000), "frequency", 30_000_000)
         if frequency < 100:
             raise ValueError("frequency must be at least 100 Hz")
@@ -181,13 +194,29 @@ class Workspace:
         size = number(request.get("length", 0), "length", MAX_IMAGE)
         file_id = request.get("file_id")
         info = None
-        if action in ("write", "verify"):
+        secret = {}
+        if request.get("password"):
+            if target not in chips.CHIPS or chips.CHIPS[target].algorithm != "c90-b":
+                raise ValueError("This family's JTAG password scan awaits its verified reference-manual register map")
+            secret["login"] = parse_password(chips.CHIPS[target], request["password"])
+        if action == "authenticate" and "login" not in secret:
+            raise ValueError("Enter a password before opening a password-authenticated session")
+        slot = request.get("password_slot", "jtag")
+        if action == "install_password":
+            if target not in chips.CHIPS or chips.CHIPS[target].algorithm not in ("c90-b", "c55-mpc5748", "c55-spc58h"):
+                raise ValueError("Password provisioning for this family awaits its verified security register map")
+            chip = chips.CHIPS[target]
+            secret["new"] = parse_password(chip, request.get("new_password"), installing=True)
+            if secret["new"] != parse_password(chip, request.get("confirm_password"), installing=True):
+                raise ValueError("new passwords do not match")
+            address, size = password_address(chip, slot), len(secret["new"])
+        if action in ("write", "program", "verify"):
             info, _ = self.file(file_id)
             if info["kind"] == "backup":
                 raise ValueError("a backup archive is not a raw firmware image")
             size = info["size"]
         blocks = ()
-        if action != "identify":
+        if action not in ("identify", "authenticate"):
             if target in PARTS:
                 part = PARTS[target]
                 if size == 0 or address + size > part.size:
@@ -200,17 +229,37 @@ class Workspace:
                                for a in range(start, end, part.sector))
             else:
                 blocks = select_blocks(chips.CHIPS[target], address, size, whole=action == "erase")
+                if action in MUTATING:
+                    Flash._check_blocks(blocks, erase=action == "erase")
+                if action == "write" and any(b.kind == "otp" for b in blocks):
+                    raise ValueError("OTP needs Program once; erase/preserve/write is not supported")
+                if action == "program":
+                    unit = chips.CHIPS[target].program_unit
+                    if address % unit or size % unit:
+                        raise ValueError(f"Program requires complete aligned {unit}-byte ECC units")
         filename = safe_filename(request.get("filename") or f"{target}-{address:08x}-{mode}.bin")
         plan = {"id": uuid.uuid4().hex, "target": target, "action": action, "mode": mode,
                 "address": address, "length": size, "frequency": frequency, "expected_id": expected,
                 "file_id": file_id if info else None, "image": info,
                 "blocks": [asdict(b) for b in blocks], "backup_bytes": sum(b.size for b in blocks),
                 "preserve": action == "write", "filename": filename}
+        plan["password_slot"] = slot if action == "install_password" else None
+        plan["notes"] = []
+        if any(b.kind == "otp" for b in blocks) and action in MUTATING:
+            plan["notes"].append("One-time programming: only erased ECC units may be written. No erase or rollback is possible.")
+        if any(b.kind == "shadow" for b in blocks):
+            plan["notes"].append("SHADOW erase preserves the configuration tail at +0x3DD0. Writing validates the censorship words before erasing.")
+        if action == "install_password":
+            plan["notes"].append("Installs the password only; existing censorship, lifecycle and DCF settings are preserved. This does not enable protection on an unprotected chip.")
         with self.lock:
             # Pending plans are small and disposable; one-use IDs prevent double submission.
             if len(self.plans) >= 100:
-                self.plans.pop(next(iter(self.plans)))
+                expired = next(iter(self.plans))
+                self.plans.pop(expired)
+                self._plan_secrets.pop(expired, None)
             self.plans[plan["id"]] = plan
+            if secret:
+                self._plan_secrets[plan["id"]] = secret
         return plan
 
     def start(self, plan_id):
@@ -249,7 +298,7 @@ class Workspace:
                 flash.close()
         else:
             with TargetSession(chips.CHIPS[target], self.url, plan["frequency"], plan["expected_id"],
-                               reset_pin=self.reset_pin) as session:
+                               reset_pin=self.reset_pin, password=self._plan_secrets.get(plan["id"], {}).get("login")) as session:
                 session.flash.progress = progress
                 yield session.flash
 
@@ -264,8 +313,10 @@ class Workspace:
             with self.lock:
                 if action == "read" and job.get("cancel_requested"):
                     raise ReadCancelled("Read stopped. No completed dump was saved.")
-                job["phase"] = phase.capitalize()
-                job["progress"] = round(100 * done / total) if total else 0
+                job["phase"] = f"{action.capitalize()} · {phase}"
+                # Only successful finalization may display 100%.
+                fraction = round(100 * done / total) if total else 0
+                job["progress"] = max(job["progress"], min(99, fraction))
 
         def backup(originals):
             save_backup(backup_dir, target, originals)
@@ -289,7 +340,9 @@ class Workspace:
                 data = self.file(plan["file_id"])[1].read_bytes() if plan["file_id"] else None
                 self._log(job, f"{action.capitalize()} {plan['length']:,} bytes at 0x{plan['address']:08X}.")
                 with self._backend(plan, progress) as flash:
-                    if action == "read":
+                    if action == "authenticate":
+                        result["message"] = "Password supplied; debug session opened. An already uncensored target cannot validate the password."
+                    elif action == "read":
                         progress("read", 0, plan["length"])
                         data = flash.read(plan["address"], plan["length"])
                         progress("read", plan["length"], plan["length"])
@@ -304,11 +357,44 @@ class Workspace:
                     elif action == "write":
                         flash.patch(plan["address"], data, backup)
                         result["message"] = "Write verified. Bytes outside the image were preserved."
+                    elif action == "program":
+                        blocks = [Block(**b) for b in plan["blocks"]]
+                        originals = []
+                        for index, b in enumerate(blocks):
+                            if isinstance(flash, Flash):
+                                with flash.stage("backup", 0.2 * index / len(blocks), 0.2 * (index + 1) / len(blocks)):
+                                    originals.append((b, flash.read(b.address, b.size)))
+                            else:
+                                originals.append((b, flash.read(b.address, b.size)))
+                        backup(originals)
+                        if isinstance(flash, Flash):
+                            with flash.stage("program and verify", 0.2, 1):
+                                flash.program(plan["address"], data)
+                        else:
+                            flash.program(plan["address"], data)
+                        result["message"] = "Program complete. Read-back verification passed."
+                    elif action == "install_password":
+                        provision(flash, self._plan_secrets[plan["id"]]["new"], backup, slot=plan["password_slot"])
+                        result["message"] = "Password installed and verified. Existing protection settings were preserved."
                     elif action == "erase":
                         blocks = [Block(**b) for b in plan["blocks"]]
-                        backup([(b, flash.read(b.address, b.size)) for b in blocks])
-                        flash.erase(plan["address"], plan["length"])
-                        result["message"] = "Erase complete. Blank check passed."
+                        originals = []
+                        for index, b in enumerate(blocks):
+                            if isinstance(flash, Flash):
+                                with flash.stage("backup", 0.2 * index / len(blocks), 0.2 * (index + 1) / len(blocks)):
+                                    originals.append((b, flash.read(b.address, b.size)))
+                            else:
+                                originals.append((b, flash.read(b.address, b.size)))
+                                progress("backup", 0.2 * (index + 1) / len(blocks), 1)
+                        backup(originals)
+                        if isinstance(flash, Flash):
+                            with flash.stage("erase", 0.2, 1):
+                                flash.erase(plan["address"], plan["length"])
+                        else:
+                            progress("erase and blank check", 0.2, 1)
+                            flash.erase(plan["address"], plan["length"])
+                        result["message"] = ("SHADOW user area erased; security/boot configuration restored and verified."
+                                             if any(b.kind == "shadow" for b in blocks) else "Erase complete. Blank check passed.")
             self._log(job, result["message"])
             final_status = "complete"
             with self.lock:
@@ -322,6 +408,7 @@ class Workspace:
             with self.lock:
                 job.update(phase="Failed", error=str(exc))
         finally:
+            self._plan_secrets.pop(plan["id"], None)
             if backup_dir.exists():
                 try:
                     import io
@@ -344,7 +431,7 @@ class ReadCancelled(Exception):
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "TigardUI/0.4"
+    server_version = "TigardUI/0.5"
 
     def log_message(self, *_):
         pass

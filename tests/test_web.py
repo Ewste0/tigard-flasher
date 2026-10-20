@@ -83,7 +83,7 @@ class WebTests(unittest.TestCase):
             with urllib.request.urlopen(self.url + path) as response:
                 self.assertEqual(response.headers.get_content_type(), mime)
                 self.assertTrue(response.read().startswith(signature))
-        self.assertEqual(len(state["targets"]), 4)
+        self.assertEqual(len(state["targets"]), 7)
         self.assertEqual(self.call("/../web.py")[0], 404)
         self.assertEqual(self.call("/assets/../../web.py")[0], 404)
         self.assertEqual(self.call("/api/demo", {})[0], 404)
@@ -137,6 +137,38 @@ class WebTests(unittest.TestCase):
         self.assertIn("verify mismatch", failed["error"])
         self.assertEqual(self.complete(self.payload())["status"], "complete")
 
+    def test_otp_full_workflow_and_unavailable_operations(self):
+        for target, address, unit in (("spc560b64", 0x400000, 8), ("spc560b64", 0xC00000, 8),
+                                      ("spc5748g", 0x401000, 8), ("spc58nh92", 0x400300, 16)):
+            with self.subTest(target=target, address=address):
+                data = bytes(range(unit))
+                _, image = self.call("/api/files?name=otp-fixture.bin", data, raw=True)
+                request = self.payload(target, "program", address=address, length=unit, file_id=image["id"])
+                self.assertEqual(self.complete({**request, "action": "blank"})["status"], "complete")
+                result = self.complete(request)
+                self.assertEqual(result["status"], "complete", result)
+                self.assertIn("backup", result["result"])
+                self.assertEqual(self.complete({**request, "action": "verify"})["status"], "complete")
+                result = self.complete({**request, "action": "read"})
+                self.assertEqual(self.call("/api/download/" + result["result"]["file"]["id"])[1], data)
+                failed = self.complete(request)
+                self.assertEqual(failed["status"], "failed")
+                self.assertLess(failed["progress"], 100)
+                self.assertEqual(self.complete({**request, "action": "blank"})["status"], "failed")
+                for action in ("write", "erase"):
+                    self.assertEqual(self.call("/api/plan", {**request, "action": action})[0], 400)
+
+    def test_password_jobs_discard_secrets_and_preserve_settings(self):
+        for target, password in (("spc560b64", "123456789ABCDEF0"), ("spc58nh92", "01234567" * 8)):
+            request = self.payload(target, "install_password", new_password=password, confirm_password=password)
+            result = self.complete(request)
+            self.assertEqual(result["status"], "complete", result)
+            self.assertNotIn(password, json.dumps(result))
+            self.assertEqual(self.server.workspace._plan_secrets, {})
+        failed = self.complete(request)  # the same OTP slot cannot be programmed twice
+        self.assertEqual(failed["status"], "failed")
+        self.assertEqual(self.server.workspace._plan_secrets, {})
+
     def test_backup_failure_never_modifies_simulated_flash(self):
         _, image = self.call("/api/files?name=fixture.bin", bytes(range(256)) * 2, raw=True)
         with patch("spc5tool.web.save_backup", side_effect=OSError("backup disk full")):
@@ -180,7 +212,7 @@ class WebTests(unittest.TestCase):
         self.assertEqual(self.call("/api/run", {"plan_id": plan["id"]})[0], 400)
 
     def test_security_and_range_rejections(self):
-        for request in (self.payload(address=0x200000), self.payload(action="erase", length=8),
+        for request in (self.payload(address=0x204000), self.payload(action="erase", length=8),
                         self.payload(length=0), self.payload(target="unknown"),
                         self.payload(address=True), self.payload(frequency=0),
                         self.payload(action="write", file_id="../../etc/passwd")):

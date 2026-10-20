@@ -8,7 +8,7 @@
 </head>
 <body>
   <header class="titlebar">
-    <div class="brand"><span class="brand-mark">T</span><div>Tigard <strong>Flasher</strong><span class="version">LOCAL / 0.4</span></div></div>
+    <div class="brand"><span class="brand-mark">T</span><div>Tigard <strong>Flasher</strong><span class="version">LOCAL / 0.5</span></div></div>
     <div class="title-right"><span class="mode-pill live" id="modeBadge"><i></i> Tigard hardware</span><button id="settingsButton" class="title-button" data-icon="settings">Settings</button></div>
   </header>
   <nav class="file-toolbar" aria-label="File tools">
@@ -22,6 +22,7 @@
     <span class="toolbar-label">FLASH TOOLS</span>
     <button data-operation="read" data-icon="download">Read</button>
     <button data-operation="write" data-icon="upload" class="primary" disabled>Write</button>
+    <button data-operation="program" data-icon="upload" disabled>Program</button>
     <button data-operation="verify" data-icon="check" disabled>Verify</button>
     <span class="divider"></span><button data-operation="erase" data-icon="eraser">Erase</button>
     <button data-operation="blank" data-icon="square">Blank check</button>
@@ -38,14 +39,27 @@
       <section class="panel region-panel">
         <div class="section-heading"><h2>Memory regions</h2><span class="subtle" id="regionCount">02</span></div>
         <div id="regionList" role="radiogroup" aria-label="Memory region"></div>
-        <div class="excluded" data-icon="lock">Security and OTP areas excluded</div>
+        <p class="field-note" id="regionNote"></p>
+      </section>
+      <section class="panel security-panel" id="securityPanel">
+        <div class="section-heading"><h2>Password</h2><span id="passwordLength" class="subtle"></span></div>
+        <label for="currentPassword">Current JTAG password</label><input id="currentPassword" type="password" autocomplete="off" spellcheck="false">
+        <button data-operation="authenticate" id="passwordLogin">Open with password</button>
+        <p id="passwordNote" class="field-note"></p>
+        <details><summary>Install a password</summary>
+          <label for="passwordSlot">Password slot</label><select id="passwordSlot"></select>
+          <label for="newPassword">New password</label><input id="newPassword" type="password" autocomplete="new-password" spellcheck="false">
+          <label for="confirmPassword">Repeat new password</label><input id="confirmPassword" type="password" autocomplete="new-password" spellcheck="false">
+          <button data-operation="install_password" id="passwordInstall">Review password installation</button>
+          <p class="field-note">Installs a password while preserving protection settings. C55 passwords are OTP. This does not enable protection on an unprotected device.</p>
+        </details>
       </section>
       <button id="wiringButton" class="wiring-button" data-icon="cable">Connection guide<span>↗</span></button>
       <section class="panel connection-panel">
         <div class="section-heading"><h2>Connection</h2><span class="status-dot"></span></div>
         <div class="adapter-row"><div class="adapter-icon" data-icon="usb"></div><div><strong>Tigard</strong><small>FT2232H · Channel B</small></div></div>
         <dl><div><dt>Adapter</dt><dd id="adapterState">Checking USB</dd></div><div><dt>Target</dt><dd id="targetState">Not identified</dd></div><div><dt>Clock</dt><dd id="clockValue">500 kHz</dd></div></dl>
-        <div class="connection-note" id="connectionNote">USB is disabled in this session.<br>Work with a persistent virtual chip.</div>
+        <div class="connection-note" id="connectionNote">Checking the connected Tigard adapter.</div>
       </section>
       <div class="sidebar-foot"><span data-icon="shield"></span><span>Local workspace<br><strong>Your files stay on this computer.</strong></span></div>
     </aside>
@@ -79,8 +93,8 @@
       <section class="panel activity-panel" id="activityPanel"><div class="section-heading"><h2><span data-icon="terminal"></span>Session log</h2><div class="log-actions"><span id="logCount">0 events</span><button id="clearLog" aria-label="Clear session log">Clear</button></div></div><div id="eventLog" role="log" aria-live="polite"><div class="log-entry"><time>READY</time><span class="log-level">INFO</span><span>Workspace initialized. No JTAG operation has been requested.</span></div></div><div id="resultActions" hidden></div></section>
     </div>
   </main>
-  <footer class="statusbar"><div class="status-message"><span class="ready-dot" id="jobDot"></span><strong id="statusText">Ready</strong><span id="statusDetail">Choose an image or read from the connected target</span></div><div class="progress-area"><button id="stopRead" hidden>Stop read</button><progress id="jobProgress" max="100" value="0" aria-label="Current phase progress"></progress><span id="progressText">IDLE</span></div><div class="status-target"><small>SELECTED TARGET</small><strong id="footerTarget">SPC560B64L3</strong></div></footer>
+  <footer class="statusbar"><div class="status-message"><span class="ready-dot" id="jobDot"></span><strong id="statusText">Ready</strong><span id="statusDetail">Choose an image or read from the connected target</span></div><div class="progress-area"><button id="stopRead" hidden>Stop read</button><progress id="jobProgress" max="100" value="0" aria-label="Overall operation progress"></progress><span id="progressText">IDLE</span></div><div class="status-target"><small>SELECTED TARGET</small><strong id="footerTarget">SPC560B64L3</strong></div></footer>
   <div id="toast" class="toast" role="alert" hidden></div>
-  <dialog id="confirmDialog"><form method="dialog"><div class="dialog-heading"><div><span class="eyebrow" id="confirmMode">SIMULATION</span><h2 id="confirmTitle">Review write</h2></div><button class="icon-button" value="cancel" aria-label="Close operation review">×</button></div><p id="confirmText"></p><dl class="plan-details" id="planDetails"></dl><div class="plan-note" id="planNote"></div><div class="dialog-actions"><button value="cancel">Cancel</button><button id="confirmRun" value="execute" class="primary">Run write</button></div></form></dialog>
+  <dialog id="confirmDialog"><form method="dialog"><div class="dialog-heading"><div><span class="eyebrow" id="confirmMode">TIGARD HARDWARE</span><h2 id="confirmTitle">Review write</h2></div><button class="icon-button" value="cancel" aria-label="Close operation review">×</button></div><p id="confirmText"></p><dl class="plan-details" id="planDetails"></dl><div class="plan-note" id="planNote"></div><div class="dialog-actions"><button value="cancel">Cancel</button><button id="confirmRun" value="execute" class="primary">Run write</button></div></form></dialog>
   <dialog id="settingsDialog"><form method="dialog" id="settingsForm"><div class="dialog-heading"><div><span class="eyebrow">WORKSPACE</span><h2>Connection settings</h2></div><button value="cancel" class="icon-button" aria-label="Close settings">×</button></div><p class="field-note">Live Tigard hardware only. Identify checks the connected target; reads reset and halt the MCU.</p><label for="frequencySelect">Interface clock</label><select id="frequencySelect"><option value="100000">100 kHz</option><option value="500000" selected>500 kHz</option><option value="1000000">1 MHz</option><option value="5000000">5 MHz</option></select><label for="expectedId">Expected JTAG IDCODE</label><input id="expectedId" placeholder="Identify target first" spellcheck="false"><p class="field-note">Required for hardware MCU writes and erases. MPC5748 config-block writing has been tested; other ranges and devices remain unvalidated.</p><p class="field-note" id="settingsReset"></p><div class="settings-workspace"><span>LOCAL STORAGE</span><code id="workspacePath"></code></div><div class="dialog-actions"><button value="cancel">Cancel</button><button value="save" class="primary">Save settings</button></div></form></dialog>
 </body></html>
