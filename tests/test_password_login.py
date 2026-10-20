@@ -12,7 +12,7 @@ from spc5tool.chips import SPC5748G, SPC58NH92
 from spc5tool.cli import main
 from spc5tool.errors import DriverError, NexusBusError
 from spc5tool.flash import Flash
-from spc5tool.mpsse import MpsseTransport
+from spc5tool.mpsse import MpsseTransport, MpsseError
 from spc5tool.once import OnCE
 from spc5tool.security import login_result, installation_message
 from spc5tool.session import TargetSession
@@ -128,7 +128,7 @@ class PasswordLoginTests(unittest.TestCase):
     def test_failed_login_closes_transport_before_watchdog_or_flash_setup(self):
         with patch("spc5tool.session.MpsseTransport.open") as opened, \
              patch("spc5tool.session.JtagTap") as tap, \
-             patch("spc5tool.session.OnCE"), \
+             patch("spc5tool.session.OnCE") as once, \
              patch("spc5tool.session.NexusMemory") as memory, \
              patch("spc5tool.session.Flash") as flash:
             tap.return_value.read_idcode.return_value = 0x0988101D
@@ -138,8 +138,84 @@ class PasswordLoginTests(unittest.TestCase):
                 with TargetSession(SPC5748G, password=PASSWORD):
                     self.fail("rejected login must not open a session")
             memory.return_value.write32.assert_not_called()
+            once.return_value.attach.assert_called_once_with()
             flash.assert_not_called()
             opened.return_value.close.assert_called_once()
+
+    def test_customer_delivery_halts_before_firmware_can_block_buffer_setup(self):
+        # Bench regression: after password-first boot BFEN remains set even
+        # though prefetch bits clear. Halting under reset avoids that state.
+        values = {0xFFFF4000: 0xA0000003, 0xFC030000: 0x601,
+                  0xFC030004: 1, 0xFC030018: 1}
+        firmware_ran = False
+
+        def attach(password=None):
+            nonlocal firmware_ran
+            firmware_ran = password is not None
+
+        def write(address, value):
+            values[address] = value | (1 if firmware_ran and address in
+                                      (0xFC030000, 0xFC030004, 0xFC030018) else 0)
+
+        with patch("spc5tool.session.MpsseTransport.open"), \
+             patch("spc5tool.session.JtagTap") as tap, \
+             patch("spc5tool.session.OnCE") as once, \
+             patch("spc5tool.session.NexusMemory") as memory:
+            tap.return_value.read_idcode.return_value = 0x0988101D
+            once.return_value.attach.side_effect = attach
+            memory.return_value.read32.side_effect = lambda a: values.get(a, 0)
+            memory.return_value.write32.side_effect = write
+            memory.return_value.read.return_value = PASSWORD
+            with TargetSession(SPC5748G, password=PASSWORD) as session:
+                self.assertEqual(session.authentication["method"], "stored_password")
+                self.assertFalse(session.authentication["unlock_verified"])
+                for address, mask in SPC5748G.buffering:
+                    self.assertEqual(values[address] & mask, 0)
+            once.return_value.attach.assert_called_once_with()
+            self.assertFalse(firmware_ran)
+
+    def test_c55_falls_back_only_when_normal_debug_or_lifecycle_requires_it(self):
+        for reason in ("halt rejected", "status unreadable", "protected lifecycle"):
+            with self.subTest(reason=reason), \
+                 patch("spc5tool.session.MpsseTransport.open"), \
+                 patch("spc5tool.session.JtagTap") as tap, \
+                 patch("spc5tool.session.OnCE") as once, \
+                 patch("spc5tool.session.NexusMemory") as memory:
+                tap.return_value.read_idcode.return_value = 0x0988101D
+                if reason == "halt rejected":
+                    once.return_value.attach.side_effect = [DriverError("censored"), None]
+                    memory.return_value.read32.return_value = 0xE0000002
+                elif reason == "status unreadable":
+                    memory.return_value.read32.side_effect = [
+                        NexusBusError("read", 0xFFFF4000, 0x10000006), 0xE0000002]
+                else:
+                    memory.return_value.read32.side_effect = [0xA0000002, 0xE0000002]
+                with TargetSession(SPC5748G, password=PASSWORD, prepare_flash=False) as session:
+                    self.assertTrue(session.authentication["unlock_verified"])
+                self.assertEqual(once.return_value.attach.call_args_list, [call(), call(PASSWORD)])
+                memory.return_value.read.assert_not_called()
+                memory.return_value.write32.assert_not_called()
+
+    def test_c55_usb_failure_does_not_retry_password_attachment(self):
+        with patch("spc5tool.session.MpsseTransport.open") as opened, \
+             patch("spc5tool.session.JtagTap") as tap, \
+             patch("spc5tool.session.OnCE") as once:
+            tap.return_value.read_idcode.return_value = 0x0988101D
+            once.return_value.attach.side_effect = MpsseError("USB disconnected")
+            with self.assertRaises(MpsseError):
+                with TargetSession(SPC5748G, password=PASSWORD):
+                    self.fail("USB failure must close the session")
+            once.return_value.attach.assert_called_once_with()
+            opened.return_value.close.assert_called_once()
+
+    def test_preexisting_unlock_flag_cannot_validate_an_unsubmitted_password(self):
+        memory = Mock()
+        memory.read.return_value = b"\xa5" * 32
+        with self.assertRaisesRegex(DriverError, "does not match"):
+            login_result(memory, SPC5748G, PASSWORD, status=0xE0000003,
+                         password_submitted=False)
+        memory.read.assert_called_once_with(0x400120, 32)
+        memory.read32.assert_not_called()
 
     def test_authentication_only_does_not_configure_flash_or_watchdogs(self):
         with patch("spc5tool.session.MpsseTransport.open"), \

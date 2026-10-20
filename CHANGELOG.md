@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.5.3 — 2026-10-20
+
+- Fix MPC5748G password-assisted flash setup on Customer Delivery devices:
+  halt under reset, then compare the installed password without running firmware.
+  The current-password field can remain populated for normal memory operations.
+- Retain the C55 password scan for protected devices; do not retry after a USB
+  failure or treat a pre-existing unlock flag as proof of a supplied password.
+- Report buffer setup failures with the register address and before/after values.
+- Add five regression tests covering the observed buffer failure, fallback
+  behavior, cleanup and password verification.
+- All 120 Python tests and browser checks pass. On the connected MPC5748G,
+  two 32 KiB Config reads, with and without the password, matched exactly.
+  Core halt/reset state persisted after the USB session closed.
+
 ## 0.5.2 — 2026-10-20
 
 - Enable MPC5748G's 64-digit current-password input in the UI, API and CLI.

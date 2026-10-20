@@ -1,6 +1,6 @@
 # OTP, SHADOW and passwords
 
-This document describes version 0.5.2. Most OTP/password paths have only offline
+This document describes version 0.5.3. Most OTP/password paths have only offline
 tests. One MPC5748G has limited UTEST and installed-password checks; see
 [VALIDATION.md](VALIDATION.md). Unlocking a protected MPC5748G is not yet bench
 validated.
@@ -101,11 +101,18 @@ reset/halt session. Leave it empty for an ordinary connection.
 Power-cycle the target after programming a password before checking login.
 Do not program the occupied OTP slot again.
 
-The C55 path releases external reset before submitting the eight 32-bit words,
+The MPC5748G connection first attempts an ordinary halt under reset and reads
+PASS_LCSTAT. In Customer Delivery (LIFE=3), it compares the supplied password
+against the installed slot while the cores remain halted or held in reset.
+It does not run firmware or submit a JTAG password scan on this path. Even a
+pre-existing JUN flag cannot substitute for matching the supplied password.
+
+If ordinary debug attachment is rejected, status cannot be read, or the lifecycle
+is not Customer Delivery, the C55 password path releases external reset before submitting the eight 32-bit words,
 in flash-address order and LSB-first within each word, through instruction 7 and
 a 256-bit DR. There is no C90 enable bit and no TAP reset after submission.
 Firmware may execute before the halt request; this is not a reset-vector halt.
-One password is submitted per connection, without alternative encodings/retries.
+At most one password is submitted per connection, without alternative encodings/retries.
 
 After halting, the app reads PASS_LCSTAT. A set JUN flag produces a
 `jtag_status` result with `unlock_verified: true`. When JUN is clear and LIFE
@@ -118,10 +125,12 @@ An unreadable status or slot also fails; accessible debug alone never establishe
 a successful MPC5748G password check.
 
 An authentication-only session does not configure flash buffering or watchdogs.
-Read/write sessions still require their normal setup. If firmware locks the
-buffer configuration before a post-reset password halt, a flash operation can
-fail with a setup error even though the password check passed. For an already-open
-Customer Delivery device, leave Current password empty for ordinary reads/writes.
+Read/write sessions still require their normal setup. Version 0.5.3 fixes the
+observed Customer Delivery buffering failure by avoiding the unnecessary
+firmware-execution interval. The Current password field can remain populated
+for ordinary reads/writes. If buffer controls still fail to clear, the error
+includes the register address and before/after values, and preparation stops
+before erase/program. This condition is not silently ignored.
 
 The current bench target remains in Customer Delivery. Its JUN flag did not
 assert during the scan, including after a power cycle. The stored-password

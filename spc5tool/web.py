@@ -257,7 +257,7 @@ class Workspace:
         if action == "install_password":
             plan["notes"].append("Installs the password only; existing censorship, lifecycle and DCF settings are preserved. This does not enable protection on an unprotected chip.")
         if "login" in secret and chips.CHIPS[target].password_protocol == "jtag256":
-            plan["notes"].append("MPC5748G password entry releases reset before halting; firmware may execute briefly. Protected-target unlocking awaits bench validation.")
+            plan["notes"].append("MPC5748G first attempts to halt under reset. Customer Delivery passwords are checked against the installed slot while halted. Protected-target password entry may run firmware briefly and awaits bench validation.")
         with self.lock:
             # Pending plans are small and disposable; one-use IDs prevent double submission.
             if len(self.plans) >= 100:

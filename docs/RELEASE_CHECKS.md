@@ -1,16 +1,17 @@
 # Local release checks
 
-Version 0.5.2, checked locally on macOS on 2026-10-20. Python 3.13.12,
+Version 0.5.3, checked locally on macOS on 2026-10-20. Python 3.13.12,
 Node.js 25.9.0, Puppeteer 25.14.0, Chrome 155.
 
 | Check | Result |
 | --- | --- |
-| Python unit/API/driver tests | 115 passed |
+| Python unit/API/driver tests | 120 passed |
 | JTAG/SPI pin mapping checks | Passed |
 | Browser wiring, presets, filenames, both reset mappings | Passed with mocked USB descriptors; no hardware jobs |
 | OTP buttons, plan review, family password lengths, CFLASH preset region | Passed |
 | MPC5748G 64-digit login input and API plan; SPC58 unavailable login controls | Passed in browser; no hardware jobs |
 | C55 password scan, reset ordering, wide MPSSE transfer, failed-login cleanup | Passed offline |
+| Customer Delivery reset-halt before password comparison; protected fallback and USB failures | Passed offline; buffer clearing verified on MPC5748G |
 | JUN verification vs readable stored-password match; mismatches and protected regions | Passed offline; distinct result fields |
 | Authentication-only sessions avoid unnecessary flash-buffer/watchdog setup | Passed offline and via live API |
 | Program once visibility | Visible for OTP only; CFLASH/DFLASH/SPI use Write |
@@ -29,6 +30,8 @@ Node.js 25.9.0, Puppeteer 25.14.0, Chrome 155.
 | Current USB detection | Selected Tigard present; MPC5748G IDCODE confirmed |
 | UTEST config/user read on hardware | 16,224 bytes at 0x004000A0 succeeded at 1 MHz |
 | Supplied MPC5748G password through live UI API | Completed; stored-password match, protected unlock explicitly unverified |
+| Config read with and without password at 1 MHz | Two full 32 KiB reads matched byte-for-byte |
+| Core state after USB session closed | Reopened without MCU reset: primary halted, secondary cores held in reset |
 
 No OTP, SHADOW, password or SPC58 mutation was performed during these checks.
 The user previously installed a JTAG password and the app reported read-back
@@ -38,5 +41,5 @@ and Customer Delivery password checks in
 not included in the installed application. Unsupported operations and known
 limitations are listed in [SECURITY_OPERATIONS.md](SECURITY_OPERATIONS.md).
 
-The previous hosted revision passed CI. Version 0.5.2 has local results only;
+The previous hosted revision passed CI. Version 0.5.3 has local results only;
 its GitHub Actions matrix must run after these changes are pushed.

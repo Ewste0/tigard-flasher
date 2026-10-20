@@ -104,7 +104,7 @@ function setTarget() {
   $("passwordNote").textContent = !target.password_login
     ? "Password storage is supported; JTAG login is not yet supported for this device. Installing a password does not enable protection."
     : target.password_bits === 256
-      ? "64 hex digits, in flash-address order. Power-cycle after installation. Each operation supplies the password again. Customer Delivery checks the stored password; protected-target unlock awaits bench validation. Firmware may run briefly before halt."
+      ? "64 hex digits, in flash-address order. Power-cycle after installation. Customer Delivery checks the installed password while halted under reset. Protected-target entry may run firmware briefly before halt; unlocking awaits bench validation."
       : "Enter words in flash-address order (NVPWD0, then NVPWD1). Kept in memory for the session; supplied again after each reset.";
   $("protocolBadge").textContent = target.protocol;
   $("targetAlias").textContent = target.alias; $("targetCore").textContent = target.core;

@@ -17,7 +17,7 @@ def validate_login(chip, password):
         raise ValueError(f"{chip.part} requires exactly {chip.password_bits // 4} hexadecimal digits")
 
 
-def login_result(memory, chip, password):
+def login_result(memory, chip, password, *, status=None, password_submitted=True):
     """Verify C55 status, or compare readable OTP on a Customer Delivery device.
 
     Never infer a password match merely from accessible debug. Do not read the
@@ -26,8 +26,9 @@ def login_result(memory, chip, password):
     if chip.password_protocol != "jtag256":
         return {"password_verified": False, "unlock_verified": False, "method": "debug_access_only",
                 "message": "Password supplied; debug session opened. An already uncensored target cannot validate the password."}
-    status = memory.read32(chip.flash_ctrl["PASS"] + chip.unlock["PASS_LCSTAT"])
-    if status & 0x40000000:
+    if status is None:
+        status = memory.read32(chip.flash_ctrl["PASS"] + chip.unlock["PASS_LCSTAT"])
+    if password_submitted and status & 0x40000000:
         return {"password_verified": True, "unlock_verified": True, "method": "jtag_status",
                 "message": "JTAG password accepted: the device reports password unlock. Debug session opened."}
     if status & 7 == 3:

@@ -1,7 +1,7 @@
 """Hardware session lifetime. Opening a session resets and halts the target."""
 from .errors import DriverError
 from .idcode import decode
-from .mpsse import MpsseTransport, DEFAULT_URL
+from .mpsse import MpsseTransport, MpsseError, DEFAULT_URL
 from .tap import JtagTap
 from .once import OnCE
 from .memory import OnceMemory, NexusMemory
@@ -22,6 +22,39 @@ class TargetSession:
         self.authentication = None
         self.prepare_flash = prepare_flash
 
+    def _attach(self, once):
+        if self.password is not None and self.chip.password_protocol == "jtag256":
+            # Customer Delivery already permits debug access. Halt under reset
+            # before inspecting it: running BAF/application code just to submit
+            # a password can leave BFEN set and prevent flash preparation.
+            status = None
+            try:
+                once.attach()
+                memory = NexusMemory(once)
+                status = memory.read32(self.chip.flash_ctrl["PASS"] + self.chip.unlock["PASS_LCSTAT"])
+            except MpsseError:
+                raise  # USB failures are not an indication of censorship.
+            except DriverError:
+                # A protected target may reject ordinary debug access. Use the
+                # supplied password once through the existing C55 scan path.
+                pass
+            if status is not None and status & 7 == 3:
+                # Outside the fallback's try block: a mismatch must fail, never
+                # retry a password scan or continue into flash setup.
+                self.authentication = login_result(
+                    memory, self.chip, self.password, status=status, password_submitted=False)
+                return memory
+        if self.password is None:
+            once.attach()
+        else:
+            once.attach(self.password)
+        memory = NexusMemory(once) if self.chip.has_mmu else OnceMemory(once)
+        if isinstance(memory, OnceMemory):
+            memory.initialize()
+        if self.password is not None:
+            self.authentication = login_result(memory, self.chip, self.password)
+        return memory
+
     def __enter__(self):
         self.transport = MpsseTransport.open(self.url, self.frequency, reset_pin=self.reset_pin)
         try:
@@ -34,21 +67,11 @@ class TargetSession:
             if self.expected_id is not None and self.idcode.raw != self.expected_id:
                 raise DriverError(f"IDCODE mismatch: expected 0x{self.expected_id:08x}, got 0x{self.idcode.raw:08x}")
             once = OnCE(tap, self.chip)
-            if self.password is None:
-                once.attach()
-            else:
-                once.attach(self.password)
-            self.memory = NexusMemory(once) if self.chip.has_mmu else OnceMemory(once)
-            if isinstance(self.memory, OnceMemory):
-                self.memory.initialize()
-            if self.password is not None:
-                self.authentication = login_result(self.memory, self.chip, self.password)
+            self.memory = self._attach(once)
             self.flash = Flash(self.memory, self.chip)
             self.flash.authentication = self.authentication
             if not self.prepare_flash:
-                # Authentication needs debug/status access only. Firmware can
-                # lock flash-buffer settings before a post-reset C55 halt;
-                # those settings are irrelevant to checking the password.
+                # Authentication needs debug/status access only.
                 return self
             for base in self.chip.watchdogs:
                 control = self.memory.read32(base)
@@ -64,9 +87,15 @@ class TargetSession:
                 # modifications or programming cache setup are needed.
                 registers = ()
             for address, mask in registers:
-                self.memory.write32(address, self.memory.read32(address) & ~mask)
-                if self.memory.read32(address) & mask:
-                    raise DriverError("cannot disable flash read buffering")
+                before = self.memory.read32(address)
+                self.memory.write32(address, before & ~mask)
+                after = self.memory.read32(address)
+                if after & mask:
+                    raise DriverError(
+                        f"cannot disable flash read buffering at 0x{address:08X}: "
+                        f"before=0x{before:08X}, after=0x{after:08X}, mask=0x{mask:08X}. "
+                        "The target is halted, but buffer controls did not clear. "
+                        "Flash preparation stopped before any erase or programming.")
             return self
         except BaseException:
             self.transport.close()

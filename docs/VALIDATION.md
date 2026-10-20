@@ -66,9 +66,36 @@ completed with `method: stored_password`, `password_verified: true`, and
 The initial API check reached a successful password comparison but failed in
 flash-buffer setup afterward. Authentication-only sessions now skip watchdog
 and flash-buffer configuration, which is unnecessary for a password check.
-Flash operations retain those checks; a password-assisted connection can fail
-if firmware locks buffering before the post-reset halt. On this Customer
-Delivery board, ordinary reads/writes can use an empty current-password field.
+Version 0.5.2 still failed flash setup with the Current password populated.
+
+## Password attachment and buffering correction — 2026-10-20
+
+The failure was reproduced on hardware after the reported power cycle.
+With ordinary reset-and-halt, PFCR1/2/4 started at `0x00000601`,
+`0x00000001`, `0x00000001`; clearing mask `0x51` succeeded on all three.
+With the old password-first sequence, they started at `0x00432457`,
+`0x00430057`, `0x00430057`. Prefetch bits cleared, but BFEN remained set
+on each port. Core 0 was halted (`OSR=0x209`) and cores 1/2 were held in
+reset (`0x041`) afterward. This identifies the connection sequence as the
+trigger; it does not establish the hardware mechanism retaining BFEN.
+
+Version 0.5.3 first halts under reset and checks lifecycle. Customer Delivery
+uses a constant-time comparison of the readable installed slot, without
+executing firmware for a password scan. A wrong password fails before setup.
+Other lifecycle states or rejected ordinary debug access retain the C55
+password scan path; USB failures do not trigger that fallback.
+
+On the same board, the updated password connection produced the normal
+reset-state registers and all three buffers cleared. PASS_LCSTAT remained
+`0xA0000003`. No flash/OTP programming or protection changes were performed.
+Two complete 32 KiB Config reads at `0x00FA8000`, one through ordinary
+attachment and one through the live UI API with the installed password,
+matched byte-for-byte at 1 MHz. The API reported a stored-password match,
+and its status contained no credential. After the USB session closed,
+reopening the adapter without MCU reset confirmed core states `0x209`,
+`0x041`, `0x041`: primary halted, secondary cores held in reset.
+The GW LED's meaning is board-specific; core debug status is the evidence
+for the halt state, rather than LED activity alone.
 
 ## Offline verification
 

@@ -3,7 +3,7 @@ import sys
 import types
 import unittest
 import tempfile
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, call, patch
 
 from spc5tool.chips import SPC560B64, SPC5748G
 from spc5tool.errors import DriverError
@@ -99,6 +99,19 @@ class HardwareContractTests(unittest.TestCase):
             with self.assertRaisesRegex(DriverError, 'cannot halt'):
                 with TargetSession(SPC560B64):
                     pass
+            opened.return_value.close.assert_called_once()
+
+    def test_stuck_buffer_reports_register_and_stops_preparation(self):
+        with patch('spc5tool.session.MpsseTransport.open') as opened, \
+             patch('spc5tool.session.JtagTap') as tap, \
+             patch('spc5tool.session.OnCE'), \
+             patch('spc5tool.session.NexusMemory') as memory:
+            tap.return_value.read_idcode.return_value = 0x0988101D
+            memory.return_value.read32.side_effect = lambda a: 0x00432407 if a == 0xFC030000 else 0
+            with self.assertRaisesRegex(DriverError, '0xFC030000.*after=0x00432407.*before any erase'):
+                with TargetSession(SPC5748G):
+                    self.fail('buffer preparation must not be ignored')
+            self.assertNotIn(call(0xFC030004, 0), memory.return_value.write32.call_args_list)
             opened.return_value.close.assert_called_once()
 
     def test_session_passes_selected_reset_lead(self):
