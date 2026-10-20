@@ -5,7 +5,49 @@ and the eight UTEST words in increasing address order for C55.
 Passwords must never be included in plans, logs, status snapshots or URLs.
 """
 import re
-from .errors import VerificationError
+import hmac
+from .errors import DriverError, VerificationError
+
+
+def validate_login(chip, password):
+    lengths = {"censor64": 8, "jtag256": 32}
+    if chip.password_protocol not in lengths:
+        raise ValueError("This family's JTAG password scan awaits verification from its reference manual")
+    if not isinstance(password, bytes) or len(password) != lengths[chip.password_protocol]:
+        raise ValueError(f"{chip.part} requires exactly {chip.password_bits // 4} hexadecimal digits")
+
+
+def login_result(memory, chip, password):
+    """Verify C55 status, or compare readable OTP on a Customer Delivery device.
+
+    Never infer a password match merely from accessible debug. Do not read the
+    password region in protected lifecycles or change lifecycle/lock registers.
+    """
+    if chip.password_protocol != "jtag256":
+        return {"password_verified": False, "unlock_verified": False, "method": "debug_access_only",
+                "message": "Password supplied; debug session opened. An already uncensored target cannot validate the password."}
+    status = memory.read32(chip.flash_ctrl["PASS"] + chip.unlock["PASS_LCSTAT"])
+    if status & 0x40000000:
+        return {"password_verified": True, "unlock_verified": True, "method": "jtag_status",
+                "message": "JTAG password accepted: the device reports password unlock. Debug session opened."}
+    if status & 7 == 3:
+        # Customer Delivery permits reading UTEST passwords. Compare in memory,
+        # never use flash.verify(), whose mismatch message can disclose bytes.
+        stored = memory.read(password_address(chip), len(password))
+        if not hmac.compare_digest(stored, password):
+            raise DriverError("Password does not match the installed JTAG slot. The device is still in Customer Delivery with debug access enabled.")
+        return {"password_verified": True, "unlock_verified": False, "method": "stored_password",
+                "message": "Installed JTAG password matches. Debug access is already enabled in Customer Delivery; protected-target unlock was not verified."}
+    raise DriverError("JTAG password was not accepted (unlock status is clear). Check the password and power-cycle the target after installing it. No protection settings were changed.")
+
+
+def installation_message(chip):
+    message = "Password stored and read-back verified. Protection settings were preserved; protection was not activated."
+    if chip.password_bits == 256:
+        message += " Power-cycle the target before testing password login."
+    if not chip.password_protocol:
+        message += " JTAG login is not yet supported for this device."
+    return message
 
 
 def parse_password(chip, value, *, installing=False):

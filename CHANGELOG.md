@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.5.2 — 2026-10-20
+
+- Enable MPC5748G's 64-digit current-password input in the UI, API and CLI.
+- Submit a 256-bit JTAG password after reset release and inspect PASS status.
+  Distinguish hardware-confirmed unlock from comparing the readable password
+  on an already-open Customer Delivery device. Protected-target unlocking
+  remains bench unvalidated.
+- Reject mismatching stored passwords before watchdog and flash setup, without
+  exposing the credential in error messages, plans, status or logs.
+- Clarify that installation verifies storage and does not activate protection.
+  Disable unused login inputs on families without a login implementation.
+- Keep authentication-only sessions independent of flash-buffer/watchdog setup.
+- Add ten regression tests for scan ordering, MPSSE transport, error handling,
+  status verification, API/CLI results and credential privacy, plus browser checks.
+  All 115 Python tests pass. The live UI API checked the user's installed password;
+  protected-target unlock was explicitly not reported as verified.
+
 ## 0.5.1 — 2026-10-20
 
 - Fix MPC5748G UTEST selection: default to config/user bytes at 0x004000A0,

@@ -1,14 +1,18 @@
 # Local release checks
 
-Version 0.5.1, checked locally on macOS on 2026-10-20. Python 3.13.12,
+Version 0.5.2, checked locally on macOS on 2026-10-20. Python 3.13.12,
 Node.js 25.9.0, Puppeteer 25.14.0, Chrome 155.
 
 | Check | Result |
 | --- | --- |
-| Python unit/API/driver tests | 105 passed |
+| Python unit/API/driver tests | 115 passed |
 | JTAG/SPI pin mapping checks | Passed |
 | Browser wiring, presets, filenames, both reset mappings | Passed with mocked USB descriptors; no hardware jobs |
 | OTP buttons, plan review, family password lengths, CFLASH preset region | Passed |
+| MPC5748G 64-digit login input and API plan; SPC58 unavailable login controls | Passed in browser; no hardware jobs |
+| C55 password scan, reset ordering, wide MPSSE transfer, failed-login cleanup | Passed offline |
+| JUN verification vs readable stored-password match; mismatches and protected regions | Passed offline; distinct result fields |
+| Authentication-only sessions avoid unnecessary flash-buffer/watchdog setup | Passed offline and via live API |
 | Program once visibility | Visible for OTP only; CFLASH/DFLASH/SPI use Write |
 | MPC5748 UTEST preset and factory ECC fault | Exact read ranges; errors retain physical address and MCR |
 | OTP/password backup range regression | Exact changed units; API/CLI manifests verified; backup failure prevents programming |
@@ -24,12 +28,15 @@ Node.js 25.9.0, Puppeteer 25.14.0, Chrome 155.
 | Updated original local UI | Seven targets; config default, TRST reset, 1 MHz; idle |
 | Current USB detection | Selected Tigard present; MPC5748G IDCODE confirmed |
 | UTEST config/user read on hardware | 16,224 bytes at 0x004000A0 succeeded at 1 MHz |
+| Supplied MPC5748G password through live UI API | Completed; stored-password match, protected unlock explicitly unverified |
 
-No OTP, SHADOW, password or SPC58 mutation was tested on real hardware.
-Hardware evidence includes the MPC5748 configuration and UTEST read tests in
+No OTP, SHADOW, password or SPC58 mutation was performed during these checks.
+The user previously installed a JTAG password and the app reported read-back
+verification. Hardware evidence includes the MPC5748 configuration, UTEST reads,
+and Customer Delivery password checks in
 [VALIDATION.md](VALIDATION.md). Device models are confined to `tests/` and are
 not included in the installed application. Unsupported operations and known
 limitations are listed in [SECURITY_OPERATIONS.md](SECURITY_OPERATIONS.md).
 
-The previous revision passed hosted CI. Version 0.5.1 has local results only;
+The previous hosted revision passed CI. Version 0.5.2 has local results only;
 its GitHub Actions matrix must run after these changes are pushed.

@@ -78,6 +78,7 @@ function controls() {
       (action === "install_password" && !target?.password_install);
   }
   for (const id of ["openButton", "emptyOpen", "identifyButton", "settingsButton", "familySelect", "chipSelect", "addressInput", "lengthInput", "regionRange", "readScope", "saveName", "currentPassword", "newPassword", "confirmPassword", "passwordSlot"]) $(id).disabled = !ready || busy;
+  $("currentPassword").disabled = !ready || busy || !target?.password_login;
   for (const input of document.querySelectorAll(".region-option input, .block-card")) input.disabled = busy;
   $("saveButton").disabled = !file || busy;
   $("jumpButton").disabled = !viewBytes;
@@ -100,7 +101,11 @@ function setTarget() {
     $(id).placeholder = `${target.password_bits / 4 || 64} hexadecimal digits`;
   }
   $("passwordSlot").replaceChildren(new Option("JTAG", "jtag"), ...(target.password_bits === 256 ? [0,1,2,3].map(n => new Option(`PASS group ${n}`, `group${n}`)) : []));
-  $("passwordNote").textContent = target.password_login ? "Enter words in flash-address order (NVPWD0, then NVPWD1). Kept in memory for the session; supplied again after each reset." : "256 bits = 32 bytes = 64 hex digits. JTAG login awaits verification of this family's serial password register; password length alone is not enough.";
+  $("passwordNote").textContent = !target.password_login
+    ? "Password storage is supported; JTAG login is not yet supported for this device. Installing a password does not enable protection."
+    : target.password_bits === 256
+      ? "64 hex digits, in flash-address order. Power-cycle after installation. Each operation supplies the password again. Customer Delivery checks the stored password; protected-target unlock awaits bench validation. Firmware may run briefly before halt."
+      : "Enter words in flash-address order (NVPWD0, then NVPWD1). Kept in memory for the session; supplied again after each reset.";
   $("protocolBadge").textContent = target.protocol;
   $("targetAlias").textContent = target.alias; $("targetCore").textContent = target.core;
   $("footerTarget").textContent = target.name; $("regionCount").textContent = String(target.regions.length).padStart(2, "0");
@@ -356,7 +361,7 @@ async function upload(input) {
 }
 function request(action) {
   return {target:target.key, action, mode, frequency, expected_id:expectedId || null,
-    filename:$("saveName").value, password:$("currentPassword").value,
+    filename:$("saveName").value, password:target.password_login && action !== "identify" ? $("currentPassword").value : "",
     ...(action === "install_password" ? {new_password:$("newPassword").value, confirm_password:$("confirmPassword").value, password_slot:$("passwordSlot").value} : {}),
     address:action === "identify" ? 0 : number($("addressInput").value), length:action === "identify" ? 0 : number($("lengthInput").value), file_id:file?.id};
 }

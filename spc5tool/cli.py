@@ -15,7 +15,7 @@ from .idcode import read_idcode
 from .mpsse import MpsseTransport, DEFAULT_URL
 from .session import TargetSession
 from .spi import SpiNor, PARTS
-from .security import parse_password, password_address, provision
+from .security import parse_password, password_address, provision, installation_message
 
 ALIASES = {"mpc5607b": "spc560b64", "spc560b64l3": "spc560b64",
            "mpc5605b": "spc560b54", "mpc5606b": "spc560b60",
@@ -85,8 +85,11 @@ def backend(args):
     else:
         with TargetSession(chips.get(args.chip), args.url, args.freq, args.expect_idcode,
                            reset_pin=args.reset_pin,
-                           password=parse_password(chips.get(args.chip), args.password_file.read_text()) if getattr(args, "password_file", None) else None) as session:
+                           password=parse_password(chips.get(args.chip), args.password_file.read_text()) if getattr(args, "password_file", None) else None,
+                           prepare_flash=args.action != "authenticate") as session:
             print(f"Connected: IDCODE=0x{session.idcode.raw:08x}; target reset and halted.", file=sys.stderr)
+            if session.authentication:
+                print(session.authentication["message"], file=sys.stderr)
             yield session.flash
 
 
@@ -156,9 +159,9 @@ def _password_operation(args):
     if args.action == "authenticate":
         if not args.password_file:
             raise ValueError("authenticate requires --password-file")
-        with backend(args):
+        with backend(args) as flash:
             emit({"target": args.chip, "operation": args.action, "executed": True,
-                  "message": "Password supplied; debug session opened. An uncensored target cannot validate the password."})
+                  "authentication": flash.authentication, "message": flash.authentication["message"]})
         return 0
     if chip.algorithm not in ("c90-b", "c55-mpc5748", "c55-spc58h"):
         raise ValueError("Password provisioning awaits this family's verified security map")
@@ -178,7 +181,7 @@ def _password_operation(args):
         raise ValueError("live modification requires --expect-idcode")
     with backend(args) as flash:
         provision(flash, data, lambda originals: save_backup(args.backup, args.chip, originals), slot=args.slot)
-    plan.update(executed=True, verified=True)
+    plan.update(executed=True, verified=True, message=installation_message(chip))
     emit(plan)
     return 0
 

@@ -2,7 +2,7 @@
 
 Kept deliberately generic (variable IR/DR widths) because the e200 debug flow
 needs 5-bit (MPC5607B JTAGC), 6-bit (MPC5748G JTAGC) and 10-bit (OnCE) IR scans,
-plus wide DR scans (32-bit IDCODE now; 64-bit / 256-bit uncensor payloads later).
+plus wide DR scans (32-bit IDCODE, 65-bit CENSOR_CTRL, 256-bit JTAG password).
 Owning the FSM here — rather than assuming a fixed IR length — is the reason the
 tool is built from scratch on raw MPSSE instead of a fixed-IR JTAG helper.
 """

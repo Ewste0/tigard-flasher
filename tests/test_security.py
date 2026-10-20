@@ -141,7 +141,7 @@ class SecurityTests(unittest.TestCase):
     def test_unverified_c55_login_rejected_before_usb(self):
         with patch('spc5tool.session.MpsseTransport.open') as opened:
             with self.assertRaisesRegex(ValueError, 'reference manual'):
-                with TargetSession(SPC5748G, password=bytes(range(32))):
+                with TargetSession(SPC58NH92, password=bytes(range(32))):
                     pass
             opened.assert_not_called()
 

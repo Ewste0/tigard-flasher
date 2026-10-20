@@ -45,6 +45,19 @@ async function main() {
         await page.goto(url, {waitUntil:"networkidle0"});
         await page.waitForFunction(() => !document.getElementById("wiringButton").disabled && document.getElementById("chipSelect").value === "spc5748g");
         assert.equal(await page.$eval("#modeBadge", node => node.textContent), "Tigard hardware");
+        assert.equal(await page.$eval('[data-operation="authenticate"]', node => node.disabled), false);
+        assert.equal(await page.$eval("#currentPassword", node => node.disabled), false);
+        assert.match(await page.$eval("#passwordNote", node => node.textContent), /Customer Delivery/);
+        const loginPlan = await page.evaluate(async () => {
+          const password = "0123456789ABCDEF".repeat(4);
+          document.getElementById("currentPassword").value = password;
+          const response = await fetch("/api/plan", {method:"POST", headers:{"Content-Type":"application/json"},
+            body:JSON.stringify(request("authenticate"))});
+          return {status:response.status, body:await response.json()};
+        });
+        assert.equal(loginPlan.status, 200);
+        assert.equal(JSON.stringify(loginPlan.body).includes("0123456789ABCDEF"), false);
+        await page.$eval("#currentPassword", node => { node.value = ""; });
         assert.equal(await page.$eval('[data-operation="program"]', node => node.hidden && node.disabled), true);
         assert.equal(await page.$eval("#clockValue", node => node.textContent), mode === "hardware" ? "100 kHz" : "500 kHz");
         await page.click("#wiringButton");
@@ -70,6 +83,8 @@ async function main() {
         if (reset === "trst") await page.screenshot({path:path.join(screenshots,"spc560-10pin.png"),fullPage:true});
         assert.equal(await page.$$eval("#targetConnector .wire-jcomp", nodes => nodes.length), 0);
         await page.select("#chipSelect", "spc58nh92");
+        assert.equal(await page.$eval("#currentPassword", node => node.disabled), true);
+        assert.equal(await page.$eval('[data-operation="authenticate"]', node => node.disabled), true);
         assert.equal(await page.$eval("#targetConnector", node => node.children.length), 14);
         assert.equal(await page.$eval("#readScope", node => node.value), "dflash");
         assert.equal(await page.$eval("#lengthInput", node => node.value), "0x00040000");

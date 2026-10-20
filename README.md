@@ -18,7 +18,7 @@ Screenshot uses generated test bytes; no firmware or connected target is shown.
 
 - Read, patch write, program, verify, erase, and blank check for supported flash regions.
 - OTP read, program once, verify, and blank check; SHADOW writes preserve valid configuration.
-- Family-specific password lengths, SPC560 JTAG authentication, and password installation.
+- Family-specific password lengths, SPC560/MPC5748G password entry, and password installation.
   C55 JTAG authentication and HSM programming remain unavailable; see [security operations](docs/SECURITY_OPERATIONS.md).
 - MPC5748G **Config only** default: 32 KiB at `0x00FA8000`. Full-array and custom ranges are selectable.
 - MPC5748G UTEST presets exclude the factory ECC test area. The default UTEST
@@ -39,7 +39,10 @@ Screenshot uses generated test bytes; no firmware or connected target is shown.
 | SPI `w25q128jv` | 16 MiB; JEDEC `EF4018` | SPI security registers are not supported |
 
 Only one MPC5748 configuration-block write has hardware evidence. New profiles,
-OTP programming, SHADOW, passwords, and SPC58 programming have offline tests only. Profiles
+SHADOW and SPC58 programming have offline tests only. MPC5748G has a limited
+installed-password check on an already-open Customer Delivery device;
+protected-target password unlock remains unvalidated. See the
+[security operations guide](docs/SECURITY_OPERATIONS.md). Profiles
 are explicit: an IDCODE does not establish the exact part or its geometry.
 “Full flash” selects the main array; additional regions must be selected separately.
 Access still depends on the target's protection and lifecycle state.

@@ -6,17 +6,21 @@ from .tap import JtagTap
 from .once import OnCE
 from .memory import OnceMemory, NexusMemory
 from .flash import Flash
+from .security import validate_login, login_result
 
 
 class TargetSession:
-    def __init__(self, chip, url=DEFAULT_URL, frequency=500000, expected_id=None, *, reset_pin="srst", password=None):
+    def __init__(self, chip, url=DEFAULT_URL, frequency=500000, expected_id=None, *,
+                 reset_pin="srst", password=None, prepare_flash=True):
         self.chip, self.url, self.frequency = chip, url, frequency
         self.expected_id = expected_id
         self.reset_pin = reset_pin
         self.transport = None
-        if password is not None and (chip.algorithm != "c90-b" or len(password) != 8):
-            raise ValueError("This family's JTAG password scan awaits verification from its reference manual")
+        if password is not None:
+            validate_login(chip, password)
         self.password = password
+        self.authentication = None
+        self.prepare_flash = prepare_flash
 
     def __enter__(self):
         self.transport = MpsseTransport.open(self.url, self.frequency, reset_pin=self.reset_pin)
@@ -37,6 +41,15 @@ class TargetSession:
             self.memory = NexusMemory(once) if self.chip.has_mmu else OnceMemory(once)
             if isinstance(self.memory, OnceMemory):
                 self.memory.initialize()
+            if self.password is not None:
+                self.authentication = login_result(self.memory, self.chip, self.password)
+            self.flash = Flash(self.memory, self.chip)
+            self.flash.authentication = self.authentication
+            if not self.prepare_flash:
+                # Authentication needs debug/status access only. Firmware can
+                # lock flash-buffer settings before a post-reset C55 halt;
+                # those settings are irrelevant to checking the password.
+                return self
             for base in self.chip.watchdogs:
                 control = self.memory.read32(base)
                 self.memory.write32(base + 0x10, 0xC520)
@@ -54,7 +67,6 @@ class TargetSession:
                 self.memory.write32(address, self.memory.read32(address) & ~mask)
                 if self.memory.read32(address) & mask:
                     raise DriverError("cannot disable flash read buffering")
-            self.flash = Flash(self.memory, self.chip)
             return self
         except BaseException:
             self.transport.close()

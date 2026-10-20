@@ -1,8 +1,9 @@
 # OTP, SHADOW and passwords
 
-This document describes version 0.5.1. OTP and password programming are tested
-with controller models only. MPC5748G UTEST reads after the factory test area
-have also been checked on one physical target; see [VALIDATION.md](VALIDATION.md).
+This document describes version 0.5.2. Most OTP/password paths have only offline
+tests. One MPC5748G has limited UTEST and installed-password checks; see
+[VALIDATION.md](VALIDATION.md). Unlocking a protected MPC5748G is not yet bench
+validated.
 
 ## Region operations
 
@@ -70,7 +71,7 @@ image; a complete supplied SHADOW image must preserve the intended device settin
 | Family | Bits | Bytes | Hex digits | JTAG login | Install password |
 | --- | ---: | ---: | ---: | --- | --- |
 | SPC560B54/B60/B64 | 64 | 8 | 16 | Implemented; bench unvalidated | SHADOW erase/preserve/rebuild |
-| MPC5748G | 256 | 32 | 64 | Unavailable pending verified serial protocol | JTAG or PASS group 0–3, OTP |
+| MPC5748G | 256 | 32 | 64 | Entry implemented; stored-password check on Customer Delivery; protected unlock unvalidated | JTAG or PASS group 0–3, OTP |
 | SPC58NH92/EH92 | 256 | 32 | 64 | Unavailable pending verified serial protocol | JTAG or PASS group 0–3, OTP |
 
 **32 bytes is not 32 bits.** Enter hexadecimal without `0x`. The CLI accepts
@@ -91,6 +92,43 @@ PASS-group authentication and automatic protection activation are not implemente
 Opening an already uncensored SPC560 cannot establish that a supplied password
 was correct. Protected targets may deny backups/readback and cause installation
 to fail before programming.
+
+### MPC5748G Open with password
+
+Enter all 64 hex digits in **Current password**, then use **Open with password**.
+The same input is supplied on subsequent operations, which each open a fresh
+reset/halt session. Leave it empty for an ordinary connection.
+Power-cycle the target after programming a password before checking login.
+Do not program the occupied OTP slot again.
+
+The C55 path releases external reset before submitting the eight 32-bit words,
+in flash-address order and LSB-first within each word, through instruction 7 and
+a 256-bit DR. There is no C90 enable bit and no TAP reset after submission.
+Firmware may execute before the halt request; this is not a reset-vector halt.
+One password is submitted per connection, without alternative encodings/retries.
+
+After halting, the app reads PASS_LCSTAT. A set JUN flag produces a
+`jtag_status` result with `unlock_verified: true`. When JUN is clear and LIFE
+is Customer Delivery (3), debug access is already allowed. The app compares the
+input against the readable 32-byte JTAG slot and reports `stored_password`,
+`password_verified: true`, and `unlock_verified: false`. A mismatch fails the
+operation before watchdog or flash-controller setup. In other lifecycle states
+with JUN clear, login fails without reading the protected password slot.
+An unreadable status or slot also fails; accessible debug alone never establishes
+a successful MPC5748G password check.
+
+An authentication-only session does not configure flash buffering or watchdogs.
+Read/write sessions still require their normal setup. If firmware locks the
+buffer configuration before a post-reset password halt, a flash operation can
+fail with a setup error even though the password check passed. For an already-open
+Customer Delivery device, leave Current password empty for ordinary reads/writes.
+
+The current bench target remains in Customer Delivery. Its JUN flag did not
+assert during the scan, including after a power cycle. The stored-password
+comparison is therefore the validated path on this board. **This is not evidence
+that a protected target can be unlocked.** Do not change lifecycle/DCF merely
+to test the driver. SPC58H login remains disabled, with its current-password
+field disabled so an unused credential cannot block normal operations.
 
 Passwords are omitted from plans, status JSON and logs. Pending plan secrets
 remain only in server memory until the job ends or the plan is evicted. Current
@@ -123,6 +161,13 @@ never printed or hashed into a public plan.
 - NXP [AN12092](https://www.nxp.com/docs/en/application-note/AN12092.pdf), figures
   1 and 3: MPC5748 UTEST/password map, 256-bit lengths, OTP restriction, and
   ordinary/HSM flash block mapping. PASS register input is distinct from JTAG scan input.
+- [Lauterbach Qorivva debugger manual](https://www2.lauterbach.com/pdf/debugger_mpc5500.pdf),
+  release 02.2026, Censorship Unlock (pp. 47–49), KEYCODE (p. 101), and ResBreak
+  (p. 108): MPC574xB/C/D/G reset-release restriction and eight-word input order.
+- NXP [MPC5777C reference manual](https://community.nxp.com/pwmxy87654/attachments/pwmxy87654/mpc5xxx/19572/1/MPC5777CRM%2C%20MPC5777C%20Reference%20Manual.pdf),
+  sections 55.4.4, 55.5.2, 55.5.4 and 67.3.1: related MPC57xx 256-bit register,
+  opcode 7, shift direction, and PASS status semantics. This cross-check is not
+  a substitute for a protected MPC5748G bench test; that part uses a six-bit IR.
 - NXP [AN13179](https://www.nxp.com/docs/en/application-note/AN13179.pdf), section 9:
   MPC57xx factory ECC/EDC test patterns, including the double-bit error test
   at `0x00400060`. This address was reproduced on the MPC5748G bench.
@@ -138,6 +183,6 @@ never printed or hashed into a public plan.
   confirms 256-bit passwords and separate security settings. Its UI is not evidence
   that OTP supports erase.
 
-C55 serial password order/reset timing, HSM quiescence/ownership, and complete
-security-policy activation need reference-manual confirmation and separate bench
-validation. Those functions are not represented as completed support.
+Protected MPC5748G authentication, SPC58H serial login, HSM quiescence/ownership,
+and complete security-policy activation need further device-specific validation.
+The app does not represent them as fully qualified support.

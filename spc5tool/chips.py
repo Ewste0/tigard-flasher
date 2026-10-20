@@ -47,6 +47,7 @@ class Chip:
     algorithm: str = "c90-b"
     program_unit: int = 8
     password_bits: int = 64
+    password_protocol: str = "censor64"
     watchdogs: tuple = (0xFFF38000,)
     buffering: tuple = ((0xC3F8801C, 0x19), (0xC3F88020, 1))
 
@@ -95,7 +96,7 @@ SPC5748G = Chip(
     once_irlen=10,
     has_jcomp=True,
     has_mmu=True,
-    algorithm="c55-mpc5748", password_bits=256,
+    algorithm="c55-mpc5748", password_bits=256, password_protocol="jtag256",
     watchdogs=(0xFC050000, 0xFC054000, 0xFC058000),
     buffering=((0xFC030000, 0x51), (0xFC030004, 0x51), (0xFC030018, 0x51)),
     read_presets=(
@@ -136,7 +137,8 @@ SPC5748G = Chip(
     },
     notes=(
         "JCOMP must be driven HIGH to enable the JTAGC.",
-        "Censored or PASS-protected devices require authentication not implemented here.",
+        "256-bit JTAG password entry supported; unlocking a protected target awaits bench validation.",
+        "PASS group authentication is separate from JTAG password entry and is not implemented.",
         "ERASE must write SEL0-3 (+0x38..) not just LOCK0-3 (+0x10..) or nothing erases.",
         "UTEST supports program-once; BAF and HSM are read-only in this driver.",
     ),
@@ -150,7 +152,7 @@ SPC58NH92 = Chip(
     key="spc58nh92", part="SPC58NH92", nxp_twin="ST SPC58NH · 10 MiB code + 256 KiB data",
     family="Chorus H-line", core="3x e200z4 · boot core 2",
     jtagc_irlen=6, once_irlen=10, has_jcomp=True, has_mmu=True,
-    algorithm="c55-spc58h", program_unit=16, password_bits=256,
+    algorithm="c55-spc58h", program_unit=16, password_bits=256, password_protocol="",
     watchdogs=(0xF4058000,), buffering=(),
     sram_base=0x40028000, flash_ctrl={"FMC": 0xF7FE0000, "SWT": 0xF4058000},
     regions=(FlashRegion("DFLASH", 0x00800000, 0x40000, "4 × 64 KiB"),

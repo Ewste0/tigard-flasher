@@ -23,7 +23,7 @@ from .idcode import read_idcode
 from .mpsse import DEFAULT_URL, MpsseTransport
 from .session import TargetSession
 from .spi import PARTS, SpiNor
-from .security import parse_password, password_address, provision
+from .security import parse_password, password_address, provision, validate_login, installation_message
 
 MAX_IMAGE = 16 * 1024 * 1024
 MUTATING = {"write", "erase", "program", "install_password"}
@@ -56,7 +56,7 @@ def catalog():
                         "read_only": chip.read_only, "read_presets": chip.read_presets,
                         "program_unit": chip.program_unit, "password_bits": chip.password_bits,
                         "password_install": chip.algorithm in ("c90-b", "c55-mpc5748", "c55-spc58h"),
-                        "password_login": chip.algorithm == "c90-b",
+                        "password_login": bool(chip.password_protocol),
                         "notes": chip.notes,
                         "regions": [{**asdict(r), "writable": all(b.writable for b in blocks_for(chip) if b.region == r.name)} for r in chip.regions],
                         "blocks": [asdict(b) for b in blocks_for(chip)]})
@@ -196,9 +196,10 @@ class Workspace:
         info = None
         secret = {}
         if request.get("password"):
-            if target not in chips.CHIPS or chips.CHIPS[target].algorithm != "c90-b":
-                raise ValueError("This family's JTAG password scan awaits its verified reference-manual register map")
+            if target not in chips.CHIPS:
+                raise ValueError("SPI targets do not support JTAG passwords")
             secret["login"] = parse_password(chips.CHIPS[target], request["password"])
+            validate_login(chips.CHIPS[target], secret["login"])
         if action == "authenticate" and "login" not in secret:
             raise ValueError("Enter a password before opening a password-authenticated session")
         slot = request.get("password_slot", "jtag")
@@ -255,6 +256,8 @@ class Workspace:
             plan["notes"].append("SHADOW erase preserves the configuration tail at +0x3DD0. Writing validates the censorship words before erasing.")
         if action == "install_password":
             plan["notes"].append("Installs the password only; existing censorship, lifecycle and DCF settings are preserved. This does not enable protection on an unprotected chip.")
+        if "login" in secret and chips.CHIPS[target].password_protocol == "jtag256":
+            plan["notes"].append("MPC5748G password entry releases reset before halting; firmware may execute briefly. Protected-target unlocking awaits bench validation.")
         with self.lock:
             # Pending plans are small and disposable; one-use IDs prevent double submission.
             if len(self.plans) >= 100:
@@ -302,7 +305,8 @@ class Workspace:
                 flash.close()
         else:
             with TargetSession(chips.CHIPS[target], self.url, plan["frequency"], plan["expected_id"],
-                               reset_pin=self.reset_pin, password=self._plan_secrets.get(plan["id"], {}).get("login")) as session:
+                               reset_pin=self.reset_pin, password=self._plan_secrets.get(plan["id"], {}).get("login"),
+                               prepare_flash=plan["action"] != "authenticate") as session:
                 session.flash.progress = progress
                 yield session.flash
 
@@ -344,8 +348,14 @@ class Workspace:
                 data = self.file(plan["file_id"])[1].read_bytes() if plan["file_id"] else None
                 self._log(job, f"{action.replace('_', ' ').capitalize()} {plan['length']:,} bytes at 0x{plan['address']:08X}.")
                 with self._backend(plan, progress) as flash:
+                    authentication = getattr(flash, "authentication", None)
+                    if authentication:
+                        result["authentication"] = authentication
+                        self._log(job, authentication["message"])
                     if action == "authenticate":
-                        result["message"] = "Password supplied; debug session opened. An already uncensored target cannot validate the password."
+                        if not authentication:
+                            raise DriverError("Backend did not provide a password-login result")
+                        result["message"] = authentication["message"]
                     elif action == "read":
                         progress("read", 0, plan["length"])
                         data = flash.read(plan["address"], plan["length"])
@@ -379,7 +389,7 @@ class Workspace:
                         result["message"] = "Program complete. Read-back verification passed."
                     elif action == "install_password":
                         provision(flash, self._plan_secrets[plan["id"]]["new"], backup, slot=plan["password_slot"])
-                        result["message"] = "Password installed and verified. Existing protection settings were preserved."
+                        result["message"] = installation_message(chips.CHIPS[target])
                     elif action == "erase":
                         blocks = [Block(**b) for b in plan["blocks"]]
                         originals = []

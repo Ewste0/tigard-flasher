@@ -8,6 +8,7 @@ import math
 from dataclasses import dataclass
 
 from .errors import DriverError, OperationTimeout
+from .security import validate_login
 
 READ, GO = 0x200, 0x100
 CPUSCR, NOREG, OCR, DBSR, DBCR0, NEXUS = 0x10, 0x11, 0x12, 0x30, 0x31, 0x7C
@@ -77,27 +78,48 @@ class OnCE:
             time.sleep(0.001)
 
     def attach(self, password=None):
-        """Reset-and-halt session. Firmware is never automatically resumed."""
+        """Reset and halt. C55 password entry requires reset release before halt.
+
+        Application/BAF code may run during that C55 interval. See the Lauterbach
+        Qorivva manual, Censorship Unlock and SYStem.Option.KEYCODE.
+        """
+        if password is not None:
+            validate_login(self.chip, password)
+        c55_login = password is not None and self.chip.password_protocol == "jtag256"
         cores = self.chip.core_selectors or ((0x11,) if self.chip.key == "spc560b64" else (0x28, 0x29, 0x2A))
         self.tap.reset()
         self.selected = False
         self.tap.io.set_reset(srst=True)
         try:
             time.sleep(0.01)
-            if password is not None:
-                if self.chip.algorithm != "c90-b" or len(password) != 8:
-                    raise ValueError("JTAG password scan for this family is not yet verified")
+            if password is not None and not c55_login:
                 # Input is NVPWD0 followed by NVPWD1 in memory order. The
                 # CENSOR_CTRL scan is LSB first, plus its enable bit at bit 64.
                 value = int.from_bytes(password[:4], "big") | (int.from_bytes(password[4:], "big") << 32)
                 self.tap.scan_ir(self.chip.jtagc_irlen, 7)
                 self.tap.scan_dr(65, value | (1 << 64), read=False)
                 time.sleep(0.001)
-            for opcode in cores:
-                self.select(opcode)
-                self.write_register(OCR, 0x5)  # DR | WKUP while reset asserted
+            if not c55_login:
+                for opcode in cores:
+                    self.select(opcode)
+                    self.write_register(OCR, 0x5)  # DR | WKUP while reset asserted
         finally:
             self.tap.io.set_reset(srst=False)
+        if c55_login:
+            # MPC5748G cannot authenticate while external reset is asserted.
+            # Flash-address word order, LSB-first within each 32-bit word.
+            # Exactly 256 bits: the C90 enable bit does not apply here.
+            time.sleep(0.01)
+            value = sum(int.from_bytes(password[i:i + 4], "big") << (8 * i)
+                        for i in range(0, 32, 4))
+            self.tap.scan_ir(self.chip.jtagc_irlen, 7)
+            self.tap.scan_dr(256, value, read=False)
+            time.sleep(0.01)
+            # No Test-Logic-Reset after loading the password: it clears JTAGC's
+            # password register. One submission only, no alternate guesses.
+            for opcode in cores:
+                self.select(opcode)
+                self.write_register(OCR, 0x5)
         self.core_states = {}
         for index, opcode in enumerate(cores):
             self.select(opcode)

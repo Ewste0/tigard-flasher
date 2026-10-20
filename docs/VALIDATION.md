@@ -37,11 +37,38 @@ UI API saved a dump with the same SHA-256 in approximately 13 seconds.
 This range excludes the factory
 ECC tests and is not a complete raw UTEST image.
 
-The reported password-install job failed while backing up the entire UTEST
+The initially reported password-install job failed while backing up the entire UTEST
 block, before a programming pulse. Version 0.5.1 backs up only the affected
 OTP units (32 bytes for a C55 password). That change has failure-injection and
-end-to-end API/CLI tests, but no physical OTP or password programming test.
+end-to-end API/CLI tests. Subsequently, the user ran an installation into the
+32-byte JTAG slot; the app's completed job reported read-back verification.
 The MPC5748 read presets are not applied to SPC58H's different factory map.
+
+## Password-login follow-up — 2026-10-20
+
+The MPC5748G profile previously allowed installing a password while rejecting all
+password-login requests. Version 0.5.2 enables 64-digit entry and a 256-bit JTAG
+scan after external reset release, with explicit result verification.
+
+On the same board, the stored password remained readable after the user cycled
+power. Ordinary reset/halt worked without a password. PASS_LCSTAT was
+`0xA0000003` (Customer Delivery, JUN clear), and remained unchanged after
+password submission. The 16 PASS lock registers were unchanged. All cores were
+halted or held in reset. No protection activation, lifecycle advancement, DCF
+programming, or flash programming was performed during these login checks.
+This establishes accessible debug and a stored-password comparison, not
+successful authentication against an enforced debug lock. Protected-target
+unlock remains unvalidated.
+
+The live UI API subsequently accepted the user's full 64-digit password and
+completed with `method: stored_password`, `password_verified: true`, and
+`unlock_verified: false`. Plans and status were checked for credential leakage.
+The initial API check reached a successful password comparison but failed in
+flash-buffer setup afterward. Authentication-only sessions now skip watchdog
+and flash-buffer configuration, which is unnecessary for a password check.
+Flash operations retain those checks; a password-assisted connection can fail
+if firmware locks buffering before the post-reset halt. On this Customer
+Delivery board, ordinary reads/writes can use an empty current-password field.
 
 ## Offline verification
 
