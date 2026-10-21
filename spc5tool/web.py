@@ -184,6 +184,16 @@ class Workspace:
         if target in chips.CHIPS and chips.CHIPS[target].read_only and action in MUTATING:
             raise ValueError("Selected target is a read-only profile")
         frequency = number(request.get("frequency", 500000), "frequency", 30_000_000)
+        fast_read = request.get("fast_read", False)
+        if type(fast_read) is not bool:
+            raise ValueError("fast_read must be a boolean")
+        read_delay_us = number(request.get("read_delay_us", 10), "read delay", 1000)
+        if read_delay_us < 1:
+            raise ValueError("read delay must be 1..1000 microseconds")
+        if fast_read and (target != "spc5748g" or action != "read"):
+            raise ValueError("queued reads are available only for MPC5748G Read operations")
+        if fast_read and frequency < 100000:
+            raise ValueError("queued reads require a JTAG clock of at least 100 kHz")
         if frequency < 100:
             raise ValueError("frequency must be at least 100 Hz")
         expected = request.get("expected_id")
@@ -230,6 +240,8 @@ class Workspace:
                                for a in range(start, end, part.sector))
             else:
                 blocks = select_blocks(chips.CHIPS[target], address, size, whole=action == "erase")
+                if fast_read and any(b.region != "CFLASH" for b in blocks):
+                    raise ValueError("queued reads are currently limited to MPC5748G CFLASH")
                 if action in MUTATING:
                     Flash._check_blocks(blocks, erase=action == "erase")
                 if action == "write" and any(b.kind == "otp" for b in blocks):
@@ -243,12 +255,15 @@ class Workspace:
         filename = safe_filename(request.get("filename") or f"{target}-{address:08x}-{mode}.bin")
         plan = {"id": uuid.uuid4().hex, "target": target, "action": action, "mode": mode,
                 "address": address, "length": size, "frequency": frequency, "expected_id": expected,
+                "fast_read": fast_read, "read_delay_us": read_delay_us,
                 "file_id": file_id if info else None, "image": info,
                 "blocks": [asdict(b) for b in blocks], "backup_bytes": sum(b.size for b in backups),
                 "backup_ranges": [asdict(b) for b in backups],
                 "preserve": action == "write", "filename": filename}
         plan["password_slot"] = slot if action == "install_password" else None
         plan["notes"] = []
+        if fast_read:
+            plan["notes"].append(f"Experimental queued CFLASH read; {read_delay_us} microsecond settling delay. Captured status is checked for every word. Hardware speed validation pending.")
         if any(b.kind == "otp" for b in blocks) and action in MUTATING:
             plan["notes"].append("One-time programming: only erased ECC units may be written. No erase or rollback is possible.")
             plan["notes"].append("Backup covers only the affected OTP units; unrelated factory ECC tests and password slots are not read.")
@@ -306,7 +321,8 @@ class Workspace:
         else:
             with TargetSession(chips.CHIPS[target], self.url, plan["frequency"], plan["expected_id"],
                                reset_pin=self.reset_pin, password=self._plan_secrets.get(plan["id"], {}).get("login"),
-                               prepare_flash=plan["action"] != "authenticate") as session:
+                               prepare_flash=plan["action"] != "authenticate",
+                               fast_read=plan.get("fast_read", False), read_delay_us=plan.get("read_delay_us", 10)) as session:
                 session.flash.progress = progress
                 yield session.flash
 
@@ -357,11 +373,22 @@ class Workspace:
                             raise DriverError("Backend did not provide a password-login result")
                         result["message"] = authentication["message"]
                     elif action == "read":
+                        started = time.monotonic()
+                        if plan.get("fast_read"):
+                            self._log(job, f"Queued read enabled; settling delay {plan['read_delay_us']} microseconds.")
                         progress("read", 0, plan["length"])
                         data = flash.read(plan["address"], plan["length"])
+                        elapsed = time.monotonic() - started
+                        result["read_seconds"] = round(elapsed, 3)
+                        result["bytes_per_second"] = round(len(data) / max(elapsed, 1e-9))
+                        if plan.get("fast_read"):
+                            result["fast_read_fallback"] = bool(flash.memory.fast_read_fallback)
+                            if result["fast_read_fallback"]:
+                                self._log(job, "Target was not ready after the queued delay. Discarded that batch and continued with polling reads.")
                         progress("read", plan["length"], plan["length"])
                         result["file"] = self.add_file(plan["filename"], data, "dump")
                         result["message"] = f"Read complete. SHA-256 {sha256(data)}"
+                        self._log(job, f"Read {len(data):,} bytes in {elapsed:.2f} s ({result['bytes_per_second'] / 1024:.1f} KiB/s).")
                     elif action == "verify":
                         flash.verify(plan["address"], data)
                         result["message"] = "Verification passed. Every byte matches the loaded image."

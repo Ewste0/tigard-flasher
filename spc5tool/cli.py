@@ -2,6 +2,7 @@
 import argparse
 import json
 import sys
+import time
 import zipfile
 from contextlib import contextmanager
 from pathlib import Path
@@ -86,7 +87,9 @@ def backend(args):
         with TargetSession(chips.get(args.chip), args.url, args.freq, args.expect_idcode,
                            reset_pin=args.reset_pin,
                            password=parse_password(chips.get(args.chip), args.password_file.read_text()) if getattr(args, "password_file", None) else None,
-                           prepare_flash=args.action != "authenticate") as session:
+                           prepare_flash=args.action != "authenticate",
+                           fast_read=getattr(args, "fast_read", False),
+                           read_delay_us=getattr(args, "read_delay_us", 10)) as session:
             print(f"Connected: IDCODE=0x{session.idcode.raw:08x}; target reset and halted.", file=sys.stderr)
             if session.authentication:
                 print(session.authentication["message"], file=sys.stderr)
@@ -99,6 +102,8 @@ def _operation(args):
     data = Path(args.file).read_bytes() if args.action in ("write", "program", "verify") else None
     size = len(data) if data is not None else args.length
     blocks = _blocks(args, args.address, size, whole=args.action == "erase")
+    if getattr(args, "fast_read", False) and (args.chip != "spc5748g" or any(b.region != "CFLASH" for b in blocks)):
+        raise ValueError("queued reads are currently limited to MPC5748G CFLASH")
     if not args.spi and args.action in MUTATING:
         Flash._check_blocks(blocks, erase=args.action == "erase")
         if args.action == "write" and any(b.kind == "otp" for b in blocks):
@@ -131,9 +136,15 @@ def _operation(args):
     with backend(args) as flash:
         backup = lambda originals: save_backup(args.backup, args.chip, originals)
         if args.action == "read":
+            started = time.monotonic()
             data = flash.read(args.address, size)
+            elapsed = time.monotonic() - started
             write_new(args.file, data)
             plan["sha256"] = sha256(data)
+            plan["read_seconds"] = round(elapsed, 3)
+            plan["bytes_per_second"] = round(len(data) / max(elapsed, 1e-9))
+            if getattr(args, "fast_read", False):
+                plan["fast_read_fallback"] = bool(flash.memory.fast_read_fallback)
         elif args.action == "verify":
             flash.verify(args.address, data)
         elif args.action == "blank":
@@ -249,6 +260,9 @@ def _commands(sub, spi=False):
         _common(p, spi)
         _connection(p)
         p.add_argument("--address", required=True, type=integer, help="physical address (not file offset)")
+        if action == "read" and not spi:
+            p.add_argument("--fast-read", action="store_true", help="experimental queued MPC5748G CFLASH reads")
+            p.add_argument("--read-delay-us", type=integer, default=10, help="queued read settling delay, 1..1000 microseconds (default: 10)")
         if action in ("read", "erase", "plan", "blank"):
             p.add_argument("--length", required=True, type=integer)
         if action in ("read", "write", "program", "verify"):

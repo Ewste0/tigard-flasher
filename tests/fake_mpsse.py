@@ -97,6 +97,14 @@ class FakeMpsse:
                 continue                                   # config / loopback / flush
             if op == 0x86:                                 # set clk divisor
                 i += 2; continue
+            if op in (0x8E, 0x8F):                          # idle clock, no data
+                if op == 0x8E:
+                    cycles = mv[i] + 1; i += 1
+                else:
+                    cycles = ((mv[i] | (mv[i + 1] << 8)) + 1) * 8; i += 2
+                for _ in range(cycles):
+                    self.tgt.clock(0, 0)
+                continue
             if op in (0x80, 0x82):                          # set GPIO (val, dir)
                 if op == 0x80 and hasattr(self.tgt, "reset_pin"):
                     self.tgt.reset_pin(not bool(mv[i] & 0x20))

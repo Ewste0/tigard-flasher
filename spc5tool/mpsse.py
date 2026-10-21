@@ -175,6 +175,15 @@ class MpsseTransport:
         first nbits-1 bits, then the last bit via a TMS command (0x6B/0x4B) that
         drives TMS=1 while carrying the last TDI bit in bit7.
         """
+        cmd, expected, full, rem, last = self._scan_command(nbits, tdi, read)
+        self._write(cmd + (bytes([SEND_IMMEDIATE]) if read else b""))
+        self._low = (self._low & ~0x0B) | 0x08 | (last << 1)
+        if not read:
+            return 0
+        return self._assemble(self._read_exact(expected), full, rem, nbits)
+
+    @staticmethod
+    def _scan_command(nbits, tdi, read):
         if not 1 <= nbits <= 524288 or tdi < 0 or tdi.bit_length() > nbits:
             raise ValueError("scan width must be 1..524288 and value must fit")
         cmd = bytearray()
@@ -204,15 +213,22 @@ class MpsseTransport:
         else:
             cmd += bytes([TMS_OUT, 0x00, tms_byte])
 
-        if read:
-            cmd += bytes([SEND_IMMEDIATE])
-        self._write(bytes(cmd))
-        self._low = (self._low & ~0x0B) | 0x08 | (last << 1)
-        if not read:
-            return 0
+        return bytes(cmd), expected, full, rem, last
 
-        data = self._read_exact(expected)
-        return self._assemble(data, full, rem, nbits)
+    def clock_idle(self, cycles):
+        """AN_108 6.5/6.6: clock in Run-Test/Idle with TMS held low."""
+        if not isinstance(cycles, int) or not 0 <= cycles <= 524288:
+            raise ValueError("idle clocks must be 0..524288")
+        if self._low & 0x08:
+            raise MpsseError("idle clocks require TMS low")
+        full, rem = divmod(cycles, 8)
+        cmd = bytearray()
+        if full:
+            cmd += bytes([0x8F, (full - 1) & 255, (full - 1) >> 8])
+        if rem:
+            cmd += bytes([0x8E, rem - 1])
+        if cmd:
+            self._write(bytes(cmd))
 
     # ---- helpers ----
     def _read_exact(self, n: int) -> bytes:
@@ -248,6 +264,55 @@ class MpsseTransport:
         last_bit = (data[idx] >> 7) & 1          # from the 0x6B TMS command
         val |= last_bit << (nbits - 1)
         return val
+
+
+class MpsseBatch(MpsseTransport):
+    """Compile scans without USB waits; execute once and return captured values.
+
+    A read scan returns an index into execute()'s result, not live TDO. Keep
+    replies below the FT2232H's 4 KiB receive FIFO so a synchronous USB write
+    cannot deadlock while waiting for the host to drain captured data.
+    """
+    def __init__(self, transport):
+        super().__init__(None, low_value=transport._low)
+        self._srst_bit, self._trst_bit = transport._srst_bit, transport._trst_bit
+        self.transport = transport
+        self.commands = bytearray()
+        self.captures = []
+        self.reply_bytes = 0
+
+    def _write(self, data):
+        if self._closed:
+            raise MpsseError("batch already executed")
+        if len(self.commands) + len(data) > 65536:
+            raise ValueError("MPSSE batch command limit exceeded")
+        self.commands.extend(data)
+
+    def scan(self, nbits, tdi=0, read=True):
+        cmd, expected, full, rem, last = self._scan_command(nbits, tdi, read)
+        if self.reply_bytes + expected > 2048:
+            raise ValueError("MPSSE batch reply limit exceeded")
+        self._write(cmd)
+        self._low = (self._low & ~0x0B) | 0x08 | (last << 1)
+        if not read:
+            return 0
+        index = len(self.captures)
+        self.captures.append((expected, full, rem, nbits))
+        self.reply_bytes += expected
+        return index
+
+    def execute(self):
+        if self._closed:
+            raise MpsseError("batch already executed")
+        self._closed = True
+        self.transport._write(bytes(self.commands) + bytes([SEND_IMMEDIATE]))
+        data = self.transport._read_exact(self.reply_bytes)
+        self.transport._low = self._low
+        values, offset = [], 0
+        for size, full, rem, nbits in self.captures:
+            values.append(self._assemble(data[offset:offset + size], full, rem, nbits))
+            offset += size
+        return values
 
 
 class _PyftdiIO:

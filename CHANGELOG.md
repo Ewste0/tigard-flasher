@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.6.0 — 2026-10-21
+
+- Add opt-in queued MPC5748G CFLASH reads in the UI, API and CLI, with an adjustable
+  1–1000 µs settling delay (default 10 µs). Standard reads remain the default.
+- Queue 64 single-word reads per USB exchange. Capture ready/error status before
+  each data word; discard a premature batch and continue with polling. Bus errors
+  retain the exact address. Writes, OTP and other families retain standard access.
+- Display read time and throughput, including whether polling fallback occurred.
+- Add 12 clocked-model regressions for exact data, alignment, delayed completion,
+  bus/USB errors, bounded replies and operation restrictions. All 132 tests and
+  browser checks pass. Tigard was disconnected; physical throughput is unmeasured.
+
 ## 0.5.3 — 2026-10-20
 
 - Fix MPC5748G password-assisted flash setup on Customer Delivery devices:

@@ -1,4 +1,5 @@
 """Hardware session lifetime. Opening a session resets and halts the target."""
+import math
 from .errors import DriverError
 from .idcode import decode
 from .mpsse import MpsseTransport, MpsseError, DEFAULT_URL
@@ -11,7 +12,8 @@ from .security import validate_login, login_result
 
 class TargetSession:
     def __init__(self, chip, url=DEFAULT_URL, frequency=500000, expected_id=None, *,
-                 reset_pin="srst", password=None, prepare_flash=True):
+                 reset_pin="srst", password=None, prepare_flash=True,
+                 fast_read=False, read_delay_us=10):
         self.chip, self.url, self.frequency = chip, url, frequency
         self.expected_id = expected_id
         self.reset_pin = reset_pin
@@ -21,6 +23,13 @@ class TargetSession:
         self.password = password
         self.authentication = None
         self.prepare_flash = prepare_flash
+        if not isinstance(fast_read, bool) or (fast_read and chip.key != "spc5748g"):
+            raise ValueError("queued reads are available only for MPC5748G")
+        if fast_read and frequency < 100000:
+            raise ValueError("queued reads require a JTAG clock of at least 100 kHz")
+        if type(read_delay_us) is not int or not 1 <= read_delay_us <= 1000:
+            raise ValueError("read delay must be 1..1000 microseconds")
+        self.fast_read, self.read_delay_us = fast_read, read_delay_us
 
     def _attach(self, once):
         if self.password is not None and self.chip.password_protocol == "jtag256":
@@ -96,6 +105,9 @@ class TargetSession:
                         f"before=0x{before:08X}, after=0x{after:08X}, mask=0x{mask:08X}. "
                         "The target is halted, but buffer controls did not clear. "
                         "Flash preparation stopped before any erase or programming.")
+            if self.fast_read:
+                self.memory.read_idle_clocks = max(1, math.ceil(self.frequency * self.read_delay_us / 1_000_000))
+                self.memory.fast_read = True
             return self
         except BaseException:
             self.transport.close()

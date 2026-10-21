@@ -97,6 +97,36 @@ reopening the adapter without MCU reset confirmed core states `0x209`,
 The GW LED's meaning is board-specific; core debug status is the evidence
 for the halt state, rather than LED activity alone.
 
+## Queued CFLASH reads — 2026-10-21
+
+Version 0.6.0 adds an experimental queued mode, disabled by default, for MPC5748G
+CFLASH Read operations only. It retains the single-word Nexus protocol from
+[NXP AN4365, sections 3.1/3.4](https://www.nxp.com/docs/en/application-note/AN4365.pdf).
+The existing synchronous path remains in use for register setup, authentication,
+OTP, erase/program/verification, and all other profiles.
+
+Each queue contains at most 64 words. A hardware-clocked idle interval follows
+each access request, then RWCS status and RWD data are captured without waiting
+for the host between scans. The host checks every captured status before returning
+the data. ERR fails with its word address. DV clear discards the entire batch,
+ends the outstanding access, and switches the session back to polling. Partial
+USB transfers fail. Queues cap replies at 2 KiB to leave FIFO headroom.
+The idle-clock commands follow [FTDI AN_108, sections 6.5/6.6](https://ftdichip.com/Support/Documents/AppNotes/AN_108_Command_Processor_for_MPSSE_and_MCU_Host_Bus_Emulation_Modes.pdf).
+
+The independent bit-clocked model verifies data, byte order, partial-word ranges,
+multi-batch reads, delayed readiness, exact bus errors, short USB replies, and
+fallback. A 256-byte read uses one USB write and one reply instead of 128 separate
+status/data replies. Browser tests exercise the mode/delay settings and plan
+propagation without starting a hardware operation.
+
+With a 10 µs delay, the emitted scan sequence budgets about 426.5 seconds at
+1 MHz or 97.7 seconds at 5 MHz for 6,225,920 CFLASH bytes. These are **clock-only
+lower bounds**, excluding USB, host execution, setup, retries and storage; they
+are not measured read times. A three-minute full read has not been verified.
+Tigard was disconnected during this change, so no live queued reads or writes
+were performed. Compare a Config dump against a standard read before trying a
+larger range. The UI records actual duration, byte rate, and polling fallback.
+
 ## Offline verification
 
 The unit suite covers TAP/MPSSE sequencing, OnCE/Nexus memory access, controller

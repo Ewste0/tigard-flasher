@@ -58,6 +58,20 @@ async function main() {
         assert.equal(loginPlan.status, 200);
         assert.equal(JSON.stringify(loginPlan.body).includes("0123456789ABCDEF"), false);
         await page.$eval("#currentPassword", node => { node.value = ""; });
+        await page.click("#settingsButton");
+        assert.equal(await page.$eval("#readModeSelect", node => node.value), "checked");
+        await page.select("#readModeSelect", "queued");
+        await page.$eval("#readDelayUs", node => { node.value = "20"; });
+        await page.click('#settingsDialog button[value="save"]');
+        const queuedPlan = await page.evaluate(async () => {
+          const response = await fetch("/api/plan", {method:"POST", headers:{"Content-Type":"application/json"},
+            body:JSON.stringify(request("read"))});
+          return {status:response.status, body:await response.json(), erase:request("erase").fast_read};
+        });
+        assert.equal(queuedPlan.status, 200);
+        assert.equal(queuedPlan.body.fast_read, true);
+        assert.equal(queuedPlan.body.read_delay_us, 20);
+        assert.equal(queuedPlan.erase, false);
         assert.equal(await page.$eval('[data-operation="program"]', node => node.hidden && node.disabled), true);
         assert.equal(await page.$eval("#clockValue", node => node.textContent), mode === "hardware" ? "100 kHz" : "500 kHz");
         await page.click("#wiringButton");
@@ -83,6 +97,7 @@ async function main() {
         if (reset === "trst") await page.screenshot({path:path.join(screenshots,"spc560-10pin.png"),fullPage:true});
         assert.equal(await page.$$eval("#targetConnector .wire-jcomp", nodes => nodes.length), 0);
         await page.select("#chipSelect", "spc58nh92");
+        assert.equal(await page.evaluate(() => request("read").fast_read), false);
         assert.equal(await page.$eval("#currentPassword", node => node.disabled), true);
         assert.equal(await page.$eval('[data-operation="authenticate"]', node => node.disabled), true);
         assert.equal(await page.$eval("#targetConnector", node => node.children.length), 14);

@@ -26,6 +26,7 @@ for (const element of document.querySelectorAll("[data-icon]")) {
 let targets = [], target, region, file = null, busy = false, ready = false;
 const mode = "hardware";
 let frequency = 500000, expectedId = "", pendingPlan = null, resetPin = "srst";
+let fastRead = false, readDelayUs = 10;
 let seenLogs = 0, eventCount = 0, toastTimer, previewSequence = 0;
 let activeJob = null, suggestedName = "";
 let viewBytes = null, viewFileId = null, scrollFrame = null;
@@ -361,6 +362,8 @@ async function upload(input) {
 }
 function request(action) {
   return {target:target.key, action, mode, frequency, expected_id:expectedId || null,
+    fast_read:fastRead && action === "read" && target.key === "spc5748g" && document.querySelector('input[name="region"]:checked')?.value === "CFLASH",
+    read_delay_us:readDelayUs,
     filename:$("saveName").value, password:target.password_login && action !== "identify" ? $("currentPassword").value : "",
     ...(action === "install_password" ? {new_password:$("newPassword").value, confirm_password:$("confirmPassword").value, password_slot:$("passwordSlot").value} : {}),
     address:action === "identify" ? 0 : number($("addressInput").value), length:action === "identify" ? 0 : number($("lengthInput").value), file_id:file?.id};
@@ -434,6 +437,8 @@ async function follow(job) {
 }
 function settings() {
   $("frequencySelect").value = String(frequency); $("expectedId").value = expectedId;
+  $("readModeSelect").value = fastRead ? "queued" : "checked";
+  $("readDelayUs").value = readDelayUs;
   $("settingsDialog").showModal();
 }
 function modeDisplay() {
@@ -492,7 +497,10 @@ $("settingsForm").addEventListener("submit", event => {
   if (event.submitter.value !== "save") return;
   try {
     const input = $("expectedId").value.trim(); if (input) number(input);
+    const delay = Number($("readDelayUs").value);
+    if (!Number.isInteger(delay) || delay < 1 || delay > 1000) throw new Error("Read delay must be 1–1000 microseconds.");
     frequency = Number($("frequencySelect").value); expectedId = input;
+    fastRead = $("readModeSelect").value === "queued"; readDelayUs = delay;
     modeDisplay(); suggestFilename(); checkAdapter(); log(`Mode: ${mode}. Clock: ${frequency.toLocaleString()} Hz. No JTAG session opened.`);
   } catch (error) { event.preventDefault(); message(error); }
 });

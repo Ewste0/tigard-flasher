@@ -1,11 +1,13 @@
 # Local release checks
 
-Version 0.5.3, checked locally on macOS on 2026-10-20. Python 3.13.12,
+Version 0.6.0, checked locally on macOS on 2026-10-21. Python 3.13.12,
 Node.js 25.9.0, Puppeteer 25.14.0, Chrome 155.
 
 | Check | Result |
 | --- | --- |
-| Python unit/API/driver tests | 120 passed |
+| Python unit/API/driver tests | 132 passed |
+| Queued CFLASH read sequence, delayed readiness, stale-data rejection, bus/USB errors | Passed with independent clocked model; no physical performance claim |
+| Read-mode and delay settings; API plan propagation | Passed in browser without hardware jobs |
 | JTAG/SPI pin mapping checks | Passed |
 | Browser wiring, presets, filenames, both reset mappings | Passed with mocked USB descriptors; no hardware jobs |
 | OTP buttons, plan review, family password lengths, CFLASH preset region | Passed |
@@ -27,11 +29,11 @@ Node.js 25.9.0, Puppeteer 25.14.0, Chrome 155.
 | Installed-wheel CLI and seven bundled UI routes | Passed in temporary installation |
 | Public source/distribution, relative links and private-input checks | Passed |
 | Updated original local UI | Seven targets; config default, TRST reset, 1 MHz; idle |
-| Current USB detection | Selected Tigard present; MPC5748G IDCODE confirmed |
-| UTEST config/user read on hardware | 16,224 bytes at 0x004000A0 succeeded at 1 MHz |
-| Supplied MPC5748G password through live UI API | Completed; stored-password match, protected unlock explicitly unverified |
-| Config read with and without password at 1 MHz | Two full 32 KiB reads matched byte-for-byte |
-| Core state after USB session closed | Reopened without MCU reset: primary halted, secondary cores held in reset |
+| Current USB detection | Tigard disconnected; queued reads await bench validation |
+| Earlier UTEST config/user read (0.5.1) | 16,224 bytes at 0x004000A0 succeeded at 1 MHz |
+| Earlier MPC5748G password check (0.5.3) | Stored-password match; protected unlock explicitly unverified |
+| Earlier Config read with and without password (0.5.3) | Two full 32 KiB reads matched byte-for-byte at 1 MHz |
+| Earlier core state after USB session closed (0.5.3) | Primary halted, secondary cores held in reset |
 
 No OTP, SHADOW, password or SPC58 mutation was performed during these checks.
 The user previously installed a JTAG password and the app reported read-back
@@ -41,5 +43,5 @@ and Customer Delivery password checks in
 not included in the installed application. Unsupported operations and known
 limitations are listed in [SECURITY_OPERATIONS.md](SECURITY_OPERATIONS.md).
 
-The previous hosted revision passed CI. Version 0.5.3 has local results only;
+The previous hosted revision passed CI. Version 0.6.0 has local results only;
 its GitHub Actions matrix must run after these changes are pushed.

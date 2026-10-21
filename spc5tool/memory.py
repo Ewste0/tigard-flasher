@@ -4,6 +4,9 @@ import math
 
 from .errors import NexusBusError, OperationTimeout
 from .geometry import checked_range
+from .mpsse import MpsseBatch
+from .once import OnCE
+from .tap import JtagTap
 
 
 class WordMemory:
@@ -47,10 +50,66 @@ class OnceMemory(WordMemory):
 
 class NexusMemory(WordMemory):
     """Physical accesses bypass the core MMU/cache; AN4365 3.2 and 3.4."""
-    def __init__(self, once, timeout=2.0):
+    def __init__(self, once, timeout=2.0, *, fast_read=False, read_idle_clocks=32):
         if not math.isfinite(timeout) or timeout <= 0:
             raise ValueError("timeout must be positive and finite")
         self.once, self.timeout = once, timeout
+        if not isinstance(fast_read, bool):
+            raise ValueError("fast_read must be a boolean")
+        if not isinstance(read_idle_clocks, int) or not 1 <= read_idle_clocks <= 524288:
+            raise ValueError("read idle clocks must be 1..524288")
+        self.fast_read, self.read_idle_clocks = fast_read, read_idle_clocks
+        self.fast_read_fallback = False
+
+    def read(self, address, size):
+        if not self.fast_read:
+            return super().read(address, size)
+        checked_range(address, size)
+        if not any(r.name == "CFLASH" and r.base <= address and address + size <= r.base + r.size
+                   for r in self.once.chip.regions):
+            return super().read(address, size)
+        start, end = address & ~3, (address + size + 3) & ~3
+        data = bytearray()
+        for base in range(start, end, 256):
+            count = min(64, (end - base) // 4)
+            if self.fast_read:
+                chunk = self._read_batch(base, count)
+            else:
+                chunk = super().read(base, count * 4)
+            data.extend(chunk)
+        return bytes(data[address - start:address - start + size])
+
+    def _read_batch(self, address, words):
+        batch = MpsseBatch(self.once.tap.io)
+        tap = JtagTap(batch)
+        tap.state = self.once.tap.state
+        once = OnCE(tap, self.once.chip)
+        captures = []
+        for i in range(words):
+            once.nexus_write(9, address + 4 * i)
+            once.nexus_write(7, 0x90000004 | self.once.chip.nexus_access)
+            batch.clock_idle(self.read_idle_clocks)
+            # Capture ready/error status before RWD, without a host round trip.
+            # Reuse the established single-word protocol, not an unverified
+            # multiword/burst command or speculative address increment.
+            captures.append((once.nexus_read(7), once.nexus_read(10)))
+        values = batch.execute()
+        self.once.tap.state = tap.state
+        pending = False
+        for i, (status_index, _) in enumerate(captures):
+            status = values[status_index]
+            if status & 2:
+                raise NexusBusError("read", address + 4 * i, status)
+            if not status & 1:
+                pending = True
+        if pending:
+            # Never accept stale RWD. Discard the whole batch and return to
+            # polling for this session. End the last outstanding access before
+            # starting fresh RWA/RWCS requests (AN4365 RWCS[AC]=0).
+            self.fast_read, self.fast_read_fallback = False, True
+            self.once.nexus_write(7, 0)
+            return super().read(address, words * 4)
+        return b"".join(values[data_index].to_bytes(4, "little") for _, data_index in captures)
 
     def _wait(self, read, address):
         deadline = time.monotonic() + self.timeout

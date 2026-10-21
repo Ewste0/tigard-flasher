@@ -17,6 +17,9 @@ Screenshot uses generated test bytes; no firmware or connected target is shown.
 ## Features
 
 - Read, patch write, program, verify, erase, and blank check for supported flash regions.
+- Optional queued MPC5748G CFLASH reads reduce USB waits and provide an adjustable
+  settling delay. Enable **Settings → MPC5748 CFLASH reading → Queued** to test it;
+  standard reads remain the default. Hardware speed validation is pending.
 - OTP read, program once, verify, and blank check; SHADOW writes preserve valid configuration.
 - Family-specific password lengths, SPC560/MPC5748G password entry, and password installation.
   Protected-target C55 unlocking remains unvalidated; SPC58 JTAG login and HSM programming remain unavailable. See [security operations](docs/SECURITY_OPERATIONS.md).
@@ -137,6 +140,12 @@ node tests/test_wiring.cjs
 
 For browser tests, builds, and GitHub release steps see [CONTRIBUTING.md](CONTRIBUTING.md)
 and [docs/RELEASING.md](docs/RELEASING.md).
+
+Queued CFLASH reads are also available with `read mpc5748g --fast-read
+--read-delay-us 10`, alongside the usual address, length, output file and connection
+arguments. Begin with Config only and compare the result with a standard read.
+The session log reports elapsed read time, throughput, and any fallback to polling.
+See [read-performance validation](docs/VALIDATION.md#queued-cflash-reads--2026-10-21).
 
 ## License and attribution
 
