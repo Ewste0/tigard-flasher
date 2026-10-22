@@ -155,6 +155,8 @@ class NexusMemory(WordMemory):
 
     def read32(self, address):
         self.word_address(address)
+        if self._queued_controller(address):
+            return int.from_bytes(self._read_batch(address, 1), "big")
         self.once.nexus_write(9, address)
         self.once.nexus_write(7, 0x90000004 | self.once.chip.nexus_access)  # AC, SZ=32 bits, CNT=1
         self._wait(True, address)
@@ -164,8 +166,41 @@ class NexusMemory(WordMemory):
         self.word_address(address)
         if not 0 <= value <= 0xFFFFFFFF:
             raise ValueError("word value out of range")
+        if self._queued_controller(address):
+            return self._write_controller(address, value)
         self.once.nexus_write(9, address)
         self.once.nexus_write(7, 0xD0000004 | self.once.chip.nexus_access)
         # RWD must follow RWCS: writing RWD starts the bus transfer.
         self.once.nexus_write(10, int.from_bytes(value.to_bytes(4, "big"), "little"))
         self._wait(False, address)
+
+    def _queued_controller(self, address):
+        # Only the established C55 MCR, volatile locks and erase selectors.
+        # Setup, security, watchdog and other peripheral accesses stay polled.
+        return (self.fast_read and self.once.chip.key == "spc5748g" and
+                address - self.once.chip.flash_ctrl["FMC"] in
+                (0, 0x10, 0x14, 0x18, 0x1C, 0x38, 0x3C, 0x40, 0x44))
+
+    def _write_controller(self, address, value):
+        """One USB exchange for ONE controller write, then check completion.
+
+        Never queue a subsequent controller change/pulse before the host has
+        checked this reply. If DV is still set, poll this access without replay.
+        Flash DONE/PEG checks remain the caller's responsibility.
+        """
+        batch = MpsseBatch(self.once.tap.io)
+        tap = JtagTap(batch)
+        tap.state = self.once.tap.state
+        once = OnCE(tap, self.once.chip)
+        once.nexus_write(9, address)
+        once.nexus_write(7, 0xD0000004 | self.once.chip.nexus_access)
+        once.nexus_write(10, int.from_bytes(value.to_bytes(4, "big"), "little"))
+        batch.clock_idle(self.read_idle_clocks)
+        capture = once.nexus_read(7)
+        values = batch.execute()
+        self.once.tap.state = tap.state
+        status = values[capture]
+        if status & 2:
+            raise NexusBusError("write", address, status)
+        if status & 1:
+            self._wait(False, address)

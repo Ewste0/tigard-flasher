@@ -1,15 +1,15 @@
 # Tigard Flasher feature audit
 
-Reviewed 2026-10-22 for version 0.7.0. This audit lists implemented capabilities
+Reviewed 2026-10-22 for version 0.7.1. This audit lists implemented capabilities
 and their validation limits. Hardware support is limited to the explicit device
 profiles and documented regions.
 
-| Category | Tigard Flasher 0.7.0 | Remaining limitation |
+| Category | Tigard Flasher 0.7.1 | Remaining limitation |
 | --- | --- | --- |
 | SPC/MPC over JTAG | Python TAP, OnCE/Nexus, and flash-controller drivers | Six explicit MCU profiles; additional devices require reviewed profiles and validation |
-| Flash read/write | Read, patch write, program, verify, erase, blank check, backups | Hardware writes tested on one MPC5748 configuration block; UTEST config/user reads also tested |
+| Flash read/write | Read, patch write, program, verify, erase, blank check, backups | Config and full CFLASH writes succeeded on one MPC5748 board with 0.7.0; UTEST config/user reads also tested |
 | Queued CFLASH reads | Default MPC5748G CFLASH reads at 100 kHz or faster; adjustable delay, per-word status checks and polling fallback | About four minutes for full CFLASH at 5 MHz on one board; other boards and clocks need separate validation |
-| Flash-operation speed | Queued backups/blank checks/verification, 5 MHz default, 128-byte MPC5748 CFLASH programming | Buffer transfer checked without EHV; actual erase/write timing and quad-page programming pulse not yet bench validated |
+| Flash-operation speed | Queued memory/controller access, 5 MHz, 128-byte MPC5748 programming, three read passes per changed block | 0.7.0 full erase/write succeeded; 0.7.1 controller cycles measured without EHV; new full-write time unmeasured |
 | Cancellation | Stop Read/Verify/Blank; stop Write/Erase/Program before first flash modification | Cannot stop after modification begins; preserves the ability to finish a rewritten block |
 | OTP / SHADOW | OTP read/program/verify/blank; SHADOW preservation | OTP cannot erase; BAF and HSM programming unavailable |
 | Passwords | Family lengths, SPC560/MPC5748G password entry, password installation | MPC5748G stored-password comparison verified in Customer Delivery; protected-target unlock unvalidated; SPC58 login and PASS-group unlock unavailable; no automatic protection activation |

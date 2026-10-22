@@ -21,6 +21,7 @@ class Flash:
         self.poisoned = False
         self.before_modify = lambda: None
         self.bulk_program = False
+        self.write_stats = None
 
     @contextmanager
     def stage(self, name, start=0, end=1):
@@ -126,6 +127,11 @@ class Flash:
             status = self._wait_done(base)
             if not status & PEG or status & (ERRORS | (0xF0000000 if self.c55 else 0)):
                 raise DriverError(f"flash operation failed: MCR=0x{status:08x}")
+        except MpsseError:
+            # A failed USB exchange leaves the TAP/last write indeterminate.
+            # Do not issue cleanup commands through that transport.
+            self.poisoned = True
+            raise
         finally:
             if not self.poisoned:
                 self._finish(base, mode)
@@ -153,6 +159,9 @@ class Flash:
                     if self.memory.read32(address) & mask:
                         raise DriverError(f"flash block remains locked at 0x{address:08x}; check protection/password state")
             yield
+        except MpsseError:
+            self.poisoned = True
+            raise
         finally:
             if not self.poisoned:
                 failure = None
@@ -230,6 +239,18 @@ class Flash:
         if existing != b"\xff" * len(data):
             raise DriverError("program requires erased flash; OTP units cannot be reused" if any(b.kind == "otp" for b in blocks)
                               else "program requires erased flash; use write for an erase/preserve/program cycle")
+        with self.stage("program", 0.1, 0.9):
+            self._program_erased(address, data, blocks)
+        with self.stage("verify", 0.9, 1):
+            self.verify(address, data)
+
+    def _program_erased(self, address, data, blocks):
+        """Internal: caller has checked alignment and blankness in this session.
+
+        Only program()'s preflight or patch()'s completed erase/blank check may
+        supply this proof. This helper does not replace final read-back verify.
+        """
+        unit = self.chip.program_unit
         with self._unlocked(blocks):
             block_index = 0
             offset = 0
@@ -262,9 +283,7 @@ class Flash:
                             for n in range(0, count, 4):
                                 self.memory.write32(dest + n, int.from_bytes(word[n:n + 4], "big"))
                 offset += count
-                self.progress("program", round(0.1 + 0.8 * offset / len(data), 12), 1)
-        with self.stage("verify", 0.9, 1):
-            self.verify(address, data)
+                self.progress("program", offset, len(data))
 
     def patch(self, address, data, backup):
         """Back up every affected block BEFORE any erase; preserve its other bytes.
@@ -277,6 +296,8 @@ class Flash:
         self._check_blocks(blocks)
         if any(b.kind == "otp" for b in blocks):
             raise ValueError("OTP requires Program once; erase/preserve/write is unavailable")
+        if self.bulk_program and self.chip.key == "spc5748g" and all(b.region == "CFLASH" for b in blocks):
+            return self._patch_cflash(address, data, blocks, backup)
         originals = []
         total = sum(b.size for b in blocks)
         done = 0
@@ -314,6 +335,61 @@ class Flash:
             self.progress("write", round(0.15 + 0.8 * (index + 1) / len(blocks), 12), 1)
         with self.stage("final verification", 0.95, 1):
             self.verify(address, data)
+
+    def _patch_cflash(self, address, data, blocks, backup):
+        """Three passes: durable backup, erase/blank check, final full-block verify.
+
+        Keep erasing changed blocks even if their backup reads FF: erased-looking
+        data alone does not establish unused ECC. Never reuse proof from a prior
+        connection, or use this path for OTP/security regions.
+        """
+        stats = self.write_stats = dict(backup_seconds=0, erase_blank_seconds=0,
+                                       program_seconds=0, verify_seconds=0,
+                                       changed_blocks=0, unchanged_blocks=0)
+        originals, rebuilt = [], []
+        total, done = sum(b.size for b in blocks), 0
+        started = time.monotonic()
+        for block in blocks:
+            with self.stage("backup", 0.2 * done / total, 0.2 * (done + block.size) / total):
+                original = self.read(block.address, block.size)
+            originals.append((block, original))
+            patched = bytearray(original)
+            lo, hi = max(address, block.address), min(address + len(data), block.end)
+            patched[lo - block.address:hi - block.address] = data[lo - address:hi - address]
+            rebuilt.append(bytes(patched))
+            done += block.size
+        backup(originals)  # Must succeed before any volatile lock or flash change.
+        stats["backup_seconds"] = time.monotonic() - started
+        done = 0
+        for (block, original), patched in zip(originals, rebuilt):
+            start = 0.2 + 0.6 * done / total
+            end = 0.2 + 0.6 * (done + block.size) / total
+            if patched != original:
+                stats["changed_blocks"] += 1
+                mid = start + (end - start) / 3
+                started = time.monotonic()
+                with self.stage("erase and blank check", start, mid):
+                    self._erase(block.address, block.size)
+                stats["erase_blank_seconds"] += time.monotonic() - started
+                # _erase verifies every byte is blank before returning. No other
+                # target code runs between that proof and programming this block.
+                started = time.monotonic()
+                with self.stage("program", mid, end):
+                    self._program_erased(block.address, patched, [block])
+                stats["program_seconds"] += time.monotonic() - started
+            else:
+                stats["unchanged_blocks"] += 1
+            self.progress("write", end, 1)
+            done += block.size
+        # Verify complete rebuilt blocks, including preserved bytes outside the
+        # image and unchanged blocks. A single final pass covers all of them.
+        done, started = 0, time.monotonic()
+        for (block, _), patched in zip(originals, rebuilt):
+            with self.stage("final verification", 0.8 + 0.2 * done / total,
+                            0.8 + 0.2 * (done + block.size) / total):
+                self.verify(block.address, patched)
+            done += block.size
+        stats["verify_seconds"] = time.monotonic() - started
 
     def _require_writable(self):
         if self.chip.read_only:

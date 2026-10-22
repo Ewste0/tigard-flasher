@@ -162,6 +162,9 @@ See [read-performance validation](docs/VALIDATION.md#queued-cflash-bench-validat
 
 To replace an image, use **Write** directly: it backs up the affected blocks,
 skips unchanged blocks, erases changed blocks, programs and verifies them.
+MPC5748 queued Write reuses its erase blank check and verifies each complete
+rebuilt block once at the end, including preserved bytes outside the image.
+The log reports backup, erase/blank, program and verification times separately.
 A separate full-array erase duplicates work. Stop is available before flash
 modification; after that point the operation completes its programming and verification.
 

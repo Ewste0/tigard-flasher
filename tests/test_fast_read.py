@@ -99,6 +99,17 @@ class CountingMpsse(FakeMpsse):
 
 
 class FastReadTests(unittest.TestCase):
+    def test_controller_read_one_exchange_and_polled_fallback(self):
+        for latency in (8, 1000):
+            memory, io = self.memory(latency=latency)
+            result = memory.read32(0xFFFE0000)
+            self.assertEqual(result, int.from_bytes(NexusTarget.data(0xFFFE0000, 4), 'big'))
+            if latency == 8:
+                self.assertEqual((io.writes, io.reads), (1, 1))
+            else:
+                self.assertTrue(memory.fast_read_fallback)
+                self.assertGreater(io.reads, 1)
+
     def memory(self, fast=True, delay=32, **kwargs):
         io = CountingMpsse(**kwargs)
         tap = JtagTap(MpsseTransport(io))

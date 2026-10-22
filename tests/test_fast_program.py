@@ -1,9 +1,9 @@
 """Independent wire and controller checks for MPC5748 CFLASH quad-pages."""
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from spc5tool.chips import SPC5748G
-from spc5tool.errors import NexusBusError, OperationTimeout
+from spc5tool.errors import NexusBusError, OperationTimeout, VerificationError
 from spc5tool.flash import Flash
 from spc5tool.memory import NexusMemory
 from spc5tool.mpsse import MpsseError, MpsseTransport
@@ -136,6 +136,123 @@ class FastProgramTests(unittest.TestCase):
                 self.assertFalse(any(a == 0xFFFE0000 and v & 1 for a, v in memory.log))
                 self.assertEqual(memory.read(0xFA8000, 128), b'\xff' * 128)
                 self.assertEqual(flash.poisoned, isinstance(error, MpsseError))
+
+    def test_controller_write_one_exchange_and_no_replay_on_delayed_reply(self):
+        for latency in (8, 1000):
+            memory, io = self.memory(latency=latency)
+            io.writes = 0
+            memory.write32(0xFFFE0000, 0x11)
+            self.assertEqual(io.tgt.writes, [(0xFFFE0000, b'\x00\x00\x00\x11')])
+            if latency == 8:
+                self.assertEqual((io.writes, io.reads), (1, 1))
+            else:
+                self.assertGreater(io.reads, 1)
+
+    def test_controller_bus_error_no_replay_or_subsequent_write(self):
+        memory, io = self.memory(error_address=0xFFFE0000)
+        with self.assertRaises(NexusBusError):
+            memory.write32(0xFFFE0000, 0x10)
+        self.assertEqual(len(io.tgt.writes), 1)
+        self.assertEqual(io.reads, 1)
+
+    def test_controller_queue_excludes_other_regions_and_standard_mode(self):
+        memory, io = self.memory()
+        for address in (0xFA8000, 0x400100, 0xFFFE0004, 0xFFFE0200):
+            self.assertFalse(memory._queued_controller(address))
+        memory.fast_read = False
+        self.assertFalse(memory._queued_controller(0xFFFE0000))
+
+    def test_controller_usb_failure_prevents_cleanup_bus_writes(self):
+        memory = SimMemory(SPC5748G)
+        flash = Flash(memory, SPC5748G)
+        flash.bulk_program = True
+        original = memory.write32
+        def broken(address, value):
+            if address == 0xFFFE0000 and value == 0x11:
+                raise MpsseError('short USB reply after EHV request')
+            original(address, value)
+        memory.write32 = Mock(side_effect=broken)
+        with self.assertRaises(MpsseError):
+            flash.program(0xFA8000, bytes(range(128)))
+        self.assertTrue(flash.poisoned)
+        self.assertEqual(memory.write32.call_args.args, (0xFFFE0000, 0x11))
+
+
+class FastPatchTests(unittest.TestCase):
+    def flash(self):
+        memory = SimMemory(SPC5748G)
+        flash = Flash(memory, SPC5748G)
+        flash.bulk_program = True
+        return flash, memory
+
+    def test_three_passes_back_up_before_changes_and_preserve_whole_blocks(self):
+        flash, memory = self.flash()
+        address, size = 0xFA8000, 0x8000
+        original = bytes((i % 250) + 1 for i in range(size))
+        memory.regions[0xF90000][address - 0xF90000:address - 0xF90000 + size] = original
+        backup, progress = [], []
+        flash.progress = lambda _, d, t: progress.append(d / t)
+        def save(blocks):
+            self.assertFalse(any(a == 0xFFFE0000 and v & 1 for a, v in memory.log))
+            backup.extend(blocks)
+        with patch.object(memory, 'read', wraps=memory.read) as reads:
+            # Unaligned image crosses two blocks. Whole rebuilt blocks must be
+            # verified, including bytes outside this three-byte image.
+            flash.patch(address + 0x3FFF, b'XYZ', save)
+        self.assertEqual(b''.join(d for _, d in backup), original)
+        expected = original[:0x3FFF] + b'XYZ' + original[0x4002:]
+        self.assertEqual(memory.read(address, size), expected)
+        self.assertEqual(sum(c.args[1] for c in reads.call_args_list), 3 * size)
+        self.assertEqual(flash.write_stats['changed_blocks'], 2)
+        self.assertEqual(progress, sorted(progress))
+        self.assertEqual(progress[-1], 1)
+        self.assertEqual(memory.controllers[0xFFFE0000]['regs'][0x10], 0xFFFFFFFF)
+
+    def test_unchanged_block_is_backed_up_and_verified_without_pulses(self):
+        flash, memory = self.flash()
+        backup = []
+        with patch.object(memory, 'read', wraps=memory.read) as reads:
+            flash.patch(0xFA8001, b'\xff', backup.extend)
+        self.assertEqual(len(backup), 1)
+        self.assertEqual(sum(c.args[1] for c in reads.call_args_list), 2 * 0x4000)
+        self.assertFalse(any(a == 0xFFFE0000 and v & 1 for a, v in memory.log))
+        self.assertEqual(flash.write_stats['unchanged_blocks'], 1)
+
+    def test_backup_failure_no_flash_or_lock_change(self):
+        flash, memory = self.flash()
+        with self.assertRaises(OSError):
+            flash.patch(0xFA8000, b'abcdefgh', Mock(side_effect=OSError('disk full')))
+        self.assertFalse(any(a != 0xFFFE0000 or v != 0xC000 for a, v in memory.log))
+
+    def test_failed_blank_check_never_reaches_program(self):
+        flash, memory = self.flash()
+        memory.regions[0xF90000][0x18000:0x18008] = b'old data'
+        execute = memory._execute
+        def no_erase(base, controller):
+            if controller['mcr'] & 4:
+                controller['mcr'] |= 0x600  # False positive PEG; data unchanged.
+            else:
+                execute(base, controller)
+        memory._execute = no_erase
+        with self.assertRaises(VerificationError):
+            flash.patch(0xFA8000, b'new data', lambda _: None)
+        self.assertFalse(any(a == 0xFFFE0000 and v == 0x11 for a, v in memory.log))
+
+    def test_corruption_outside_image_fails_final_verification(self):
+        flash, memory = self.flash()
+        program = flash._program_erased
+        def corrupt(*args):
+            program(*args)
+            memory.regions[0xF90000][0x18000 + 0x1000] = 0
+        flash._program_erased = corrupt
+        with self.assertRaisesRegex(VerificationError, '00fa9000'):
+            flash.patch(0xFA8000, b'new data', lambda _: None)
+
+    def test_blank_backup_does_not_skip_ecc_reinitializing_erase(self):
+        flash, memory = self.flash()
+        flash.patch(0xFA8000, bytes(range(128)), lambda _: None)
+        self.assertEqual(sum(a == 0xFFFE0000 and v == 5 for a, v in memory.log), 1)
+        self.assertEqual(sum(a == 0xFFFE0000 and v == 0x11 for a, v in memory.log), 1)
 
 
 if __name__ == '__main__':

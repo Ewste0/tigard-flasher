@@ -415,7 +415,18 @@ class Workspace:
                         flash.verify(plan["address"], b"\xff" * plan["length"])
                         result["message"] = "Blank check passed. Every byte in the selected range is FF."
                     elif action == "write":
+                        if isinstance(flash, Flash) and flash.bulk_program and plan.get("fast_read"):
+                            self._log(job, "CFLASH Write: backup, erase with blank check, program, then one full-block verification. A separate Erase is unnecessary.")
                         flash.patch(plan["address"], data, backup)
+                        if isinstance(flash, Flash) and flash.write_stats is not None:
+                            result["write_stats"] = {k: round(v, 3) if isinstance(v, float) else v
+                                                     for k, v in flash.write_stats.items()}
+                            stats = result["write_stats"]
+                            self._log(job, f"Write timing: backup {stats['backup_seconds']:.2f} s; "
+                                      f"erase + blank check {stats['erase_blank_seconds']:.2f} s; "
+                                      f"program {stats['program_seconds']:.2f} s; "
+                                      f"verify {stats['verify_seconds']:.2f} s. "
+                                      f"Blocks changed: {stats['changed_blocks']}; unchanged: {stats['unchanged_blocks']}.")
                         result["message"] = "Write verified. Bytes outside the image were preserved."
                     elif action == "program":
                         blocks = [Block(**b) for b in plan["backup_ranges"]]

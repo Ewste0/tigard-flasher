@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.7.1 — 2026-10-22
+
+- Reduce MPC5748 queued Write from five read passes per changed block to three:
+  backup, erase blank check, and final verification of the complete rebuilt block.
+  Preserve out-of-image bytes, skip unchanged blocks, and keep OTP/SHADOW paths separate.
+- Send each MPC5748 flash-controller access in one USB exchange, checking Nexus
+  completion before the next controller command. Delayed writes poll without
+  replay; programming still waits for flash DONE and checks PEG/errors.
+- Stop bus cleanup after an indeterminate USB failure. Add failure tests for
+  blank checks, preserved-byte corruption, backup errors and delayed replies.
+- Report separate backup, erase/blank, program and verify times in the UI log/API.
+- Hardware: 64 discarded buffer/control cycles fell from 1.651 s to 0.336 s;
+  no EHV pulse was issued and Config was unchanged. This is a transport timing,
+  not an end-to-end programming measurement for 0.7.1. Full-image Verify through
+  the updated app matched all 6,225,920 bytes in 193.439 s without fallback.
+- Record the user's successful 0.7.0 full CFLASH erase (496.47 s) and verified
+  write (2115.30 s), both including backups, on the existing MPC5748G bench.
+
 ## 0.7.0 — 2026-10-22
 
 - Default the interface clock to 5 MHz across UI, CLI and hardware sessions.

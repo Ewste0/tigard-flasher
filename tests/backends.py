@@ -28,5 +28,9 @@ def flash_model(target, path, progress=None):
         save_state(path, target, regions)
 
 
+@contextmanager
 def workspace_backend(workspace, plan, progress):
-    return flash_model(plan['target'], workspace.directory / 'states' / (plan['target'] + '.zip'), progress)
+    with flash_model(plan['target'], workspace.directory / 'states' / (plan['target'] + '.zip'), progress) as flash:
+        if isinstance(flash, Flash):
+            flash.bulk_program = plan.get('fast_read', False)
+        yield flash

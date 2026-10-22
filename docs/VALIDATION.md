@@ -21,9 +21,9 @@ intentionally excluded from this public repository. These are maintainer-reporte
 bench observations, not independently reproducible public firmware fixtures.
 Firmware execution and boot behavior after the test were not evaluated.
 
-The full main-array read was canceled. Full-array writing, other configuration
-blocks, other MPC5748 boards, all SPC560/SPC58 variants, and SPI remain unvalidated on
-hardware. The CLI's `hardware_validated: false` means the entire profile is not
+At this initial check the full main-array read was canceled. Later full-array
+read/write results appear below. Other MPC5748 boards, all SPC560/SPC58 variants,
+and SPI remain unvalidated on hardware. The CLI's `hardware_validated: false` means the entire profile is not
 qualified; it does not discard the limited MPC5748 bench observations above.
 
 ## UTEST bench follow-up — 2026-10-20
@@ -105,20 +105,26 @@ CFLASH groups use one programming pulse, following the quad-page capability in
 [NXP's MPC5748G data sheet, table 29](https://www.nxp.com/docs/en/data-sheet/MPC5748G.pdf).
 Each queued buffer write uses the single-word protocol in
 [AN4365 section 3.2](https://www.nxp.com/docs/en/application-note/AN4365.pdf).
-All captured write statuses must succeed before EHV is asserted. No queued
-command starts a program/erase pulse. A failed buffer is never retried or committed.
+All captured buffer-write statuses must succeed before EHV is asserted. The
+buffer-loading queue never starts a program/erase pulse. A failed buffer is never retried or committed.
 OTP, partial pages and all-ones ECC units retain the original programming path.
 
 A hardware test loaded a 128-byte volatile program buffer in 0.003999 s at
 5 MHz and then discarded it without an EHV pulse. Config was identical before
-and after. This verifies buffer transport, **not** a completed programming pulse
-or an end-to-end write time. The earlier full-array erase was stopped while
-still backing up, before array erasure began. No new erase or programming test
-was run for this version; a selected rewrite image is still required.
-The deployed UI/API started at 5 MHz without a clock override. Config Verify
-completed in 1.278 s with queued access and matched the saved standard dump;
-Write and Erase plans also selected queued reads by default. Those two plans
-were inspected only and were not executed.
+and after. Initially this established buffer transport only. The user subsequently
+completed a full CFLASH erase and write on the same board using 0.7.0:
+
+- Range: `0x00F90000`, 6,225,920 bytes; 5 MHz, 10 µs queued delay.
+- Erase including backup and blank check: **496.47 s**; backup about 233 s.
+- Write including backup and read-back verification: **2115.30 s**; backup about 238 s.
+- The application reported successful verification and preservation of bytes
+  outside the image. Firmware boot behavior was not evaluated.
+
+These are user-provided operation logs, also present in the completed workspace
+jobs. A separate later read failed at `0x01458200` with Nexus RWCS `0x10000006`
+and MCR `0x00000600`; this must not be described as flawless full-read reliability.
+Subsequent polling and three queued reads of a 1 KiB window at `0x01458000`
+matched the loaded image. The intermittent fault was not reproduced or explained.
 
 Offline tests exercise quad-page boundaries, partial pages, OTP exclusion,
 all-ones units, pulse count, exact byte order, delayed writes and bus/USB errors.
@@ -126,6 +132,32 @@ Cancellation tests cover backup and the final pre-mutation checkpoint; after
 modification starts, cancellation is rejected and the operation finishes.
 PEmicro-equivalent erase/write speed has not been established. This remains a
 host-driven implementation, with no target-resident programming loader.
+
+## Write pipeline follow-up (0.7.1) — 2026-10-22
+
+MPC5748 queued Write now reuses the blank check performed immediately after its
+own erase, then verifies complete rebuilt blocks in one final pass. A changed
+block is read three times instead of five. Backups must finish before any change;
+unchanged blocks are skipped and still verified. No proof of blankness is reused
+across connections. Changed blocks are still erased even if a backup reads all FF,
+because that alone does not establish unused ECC. OTP/SHADOW paths are unchanged.
+
+Each selected C55 controller read/write now uses one USB exchange. No subsequent
+controller command is queued before checking the preceding reply. Delayed writes
+are polled without replay. EHV, DONE, PEG and flash error checks remain explicit.
+The final per-block verification covers preserved bytes outside partial images.
+
+On the same board at 5 MHz, 64 cycles of MCR checks, PGM setup, 128-byte buffer load
+and buffer discard took **1.651 s with the previous controller access** and
+**0.336 s with queued controller access** (about 4.9x for this sequence).
+Neither sequence asserted EHV. The full 32 KiB Config was unchanged afterward.
+This does not establish an end-to-end erase/program time for 0.7.1; the completed
+full write above used 0.7.0. Logs now report each Write phase separately.
+
+After updating the running app, a full CFLASH Verify at 5 MHz compared all
+6,225,920 bytes against the user's loaded image in **193.439 s**. Every byte
+matched, with no fallback. No erase/program pulse was issued during the 0.7.1
+hardware checks. The previous intermittent read error did not recur in this run.
 
 ## Queued CFLASH bench validation — 2026-10-22
 

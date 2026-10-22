@@ -188,6 +188,19 @@ class WebTests(unittest.TestCase):
         self.assertIn("backup", job["result"])
         self.assertIn("finished", job)
 
+    def test_fast_write_reports_phases_and_verified_result(self):
+        _, image = self.call('/api/files?name=phase-test.bin', bytes(range(128)), raw=True)
+        job = self.complete(self.payload('spc5748g', 'write', address=0xFA8000,
+                                         file_id=image['id'], frequency=5000000))
+        self.assertEqual(job['status'], 'complete', job)
+        stats = job['result']['write_stats']
+        self.assertEqual(stats['changed_blocks'], 1)
+        self.assertEqual(stats['unchanged_blocks'], 0)
+        for name in ('backup_seconds', 'erase_blank_seconds', 'program_seconds', 'verify_seconds'):
+            self.assertGreaterEqual(stats[name], 0)
+        self.assertIn('backup', job['result'])
+        self.assertIn("finished", job)
+
     def test_upload_preview_and_exact_download(self):
         data = bytes(range(256)) * 3
         _, image = self.call("/api/files?name=sample.bin", data, raw=True)
