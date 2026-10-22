@@ -123,6 +123,36 @@ class NexusMemory(WordMemory):
                 raise OperationTimeout(f"Nexus {'read' if read else 'write'} timed out at 0x{address:08X}")
             time.sleep(0.001)
 
+    def write_program_buffer(self, address, data):
+        """Load one MPC5748G CFLASH quad-page, without asserting flash EHV.
+
+        The caller owns PGM/lock setup and must check this result before EHV.
+        No retries: an incomplete/failed queue must never commit its buffer.
+        """
+        if (self.once.chip.key != "spc5748g" or address % 128 or len(data) != 128 or
+                not any(r.name == "CFLASH" and r.base <= address and address + 128 <= r.base + r.size
+                        for r in self.once.chip.regions)):
+            raise ValueError("queued programming requires one aligned MPC5748G CFLASH quad-page")
+        batch = MpsseBatch(self.once.tap.io)
+        tap = JtagTap(batch)
+        tap.state = self.once.tap.state
+        once = OnCE(tap, self.once.chip)
+        captures = []
+        for offset in range(0, 128, 4):
+            once.nexus_write(9, address + offset)
+            once.nexus_write(7, 0xD0000004 | self.once.chip.nexus_access)
+            once.nexus_write(10, int.from_bytes(data[offset:offset + 4], "little"))
+            batch.clock_idle(self.read_idle_clocks)
+            captures.append(once.nexus_read(7))
+        values = batch.execute()
+        self.once.tap.state = tap.state
+        for index, capture in enumerate(captures):
+            status = values[capture]
+            if status & 2:
+                raise NexusBusError("write", address + index * 4, status)
+            if status & 1:
+                raise OperationTimeout(f"queued program buffer not ready at 0x{address + index * 4:08x}; buffer was not committed")
+
     def read32(self, address):
         self.word_address(address)
         self.once.nexus_write(9, address)

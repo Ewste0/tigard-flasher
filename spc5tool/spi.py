@@ -9,7 +9,7 @@ from dataclasses import dataclass
 
 from .errors import DriverError, OperationTimeout, VerificationError
 from .geometry import checked_range
-from .mpsse import DEFAULT_URL
+from .mpsse import DEFAULT_URL, DEFAULT_FREQUENCY
 
 
 @dataclass(frozen=True)
@@ -32,7 +32,7 @@ class SpiNor:
         self.controller = None
 
     @classmethod
-    def open(cls, part, url=DEFAULT_URL, frequency=1000000):
+    def open(cls, part, url=DEFAULT_URL, frequency=DEFAULT_FREQUENCY):
         if not 100 <= frequency <= 30_000_000:
             raise ValueError("SPI frequency must be between 100 Hz and 30 MHz")
         try:

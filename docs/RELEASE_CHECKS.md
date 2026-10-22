@@ -1,11 +1,11 @@
 # Local release checks
 
-Version 0.6.1, checked locally on macOS on 2026-10-22. Python 3.13.12,
+Version 0.7.0, checked locally on macOS on 2026-10-22. Python 3.13.12,
 Node.js 25.9.0, Puppeteer 25.14.0, Chrome 155.
 
 | Check | Result |
 | --- | --- |
-| Python unit/API/driver tests | 134 passed |
+| Python unit/API/driver tests | 142 passed |
 | Queued CFLASH read sequence, delayed readiness, stale-data rejection, bus/USB errors | Passed with independent clocked model; live results below |
 | Queued default, Standard override, delay settings; API/CLI operation restrictions | Passed; browser tests start no hardware jobs |
 | JTAG/SPI pin mapping checks | Passed |
@@ -28,7 +28,11 @@ Node.js 25.9.0, Puppeteer 25.14.0, Chrome 155.
 | Wheel and source distribution build; `twine check` | Passed |
 | Installed-wheel CLI and seven bundled UI routes | Passed in temporary installation |
 | Public source/distribution, relative links and private-input checks | Passed |
-| Updated original local UI | Seven targets; config default, TRST reset, 1 MHz; idle |
+| Updated original local UI | Seven targets; config default, TRST reset, 5 MHz |
+| Quad-page programming and queued buffer writes | Offline byte-order, boundary, OTP exclusion, error/no-EHV tests passed |
+| Hardware program-buffer check | 128 bytes in 0.003999 s; EHV never asserted; Config unchanged; actual write timing unmeasured |
+| Updated live defaults and verification | 5 MHz without override; Config Verify matched in 1.278 s; Write/Erase plans select queued access |
+| Stop during Write/Erase/Program preflight | Backup and final checkpoint stop before modification; later cancellation rejected |
 | Current USB detection | Tigard connected to MPC5748G, IDCODE 0x0988101D |
 | Full queued CFLASH, 5 MHz / 10 µs | 236.556 s and 197.516 s; 6,225,920 bytes identical; no fallback |
 | Standard comparison | Config plus 39 boundary/start/end samples match queued bytes |
@@ -46,5 +50,5 @@ and Customer Delivery password checks in
 not included in the installed application. Unsupported operations and known
 limitations are listed in [SECURITY_OPERATIONS.md](SECURITY_OPERATIONS.md).
 
-The previous hosted revision passed CI. Version 0.6.1 has local results only;
+The previous hosted revision passed CI. Version 0.7.0 has local results only;
 its GitHub Actions matrix must run after these changes are pushed.

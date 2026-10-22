@@ -20,7 +20,7 @@ from .files import save_backup, sha256, write_new
 from .flash import Flash
 from .geometry import Block, backup_blocks, blocks_for, select_blocks
 from .idcode import read_idcode
-from .mpsse import DEFAULT_URL, MpsseTransport
+from .mpsse import DEFAULT_URL, DEFAULT_FREQUENCY, MpsseTransport
 from .session import TargetSession
 from .spi import PARTS, SpiNor
 from .security import parse_password, password_address, provision, validate_login, installation_message
@@ -82,7 +82,7 @@ def safe_filename(value):
 
 class Workspace:
     def __init__(self, directory, allow_hardware=True, url=DEFAULT_URL, reset_pin="srst",
-                 initial_mode="hardware", frequency=500000):
+                 initial_mode="hardware", frequency=DEFAULT_FREQUENCY):
         if reset_pin not in ("srst", "trst"):
             raise ValueError("reset_pin must be srst or trst")
         if initial_mode != "hardware" or not allow_hardware:
@@ -157,11 +157,11 @@ class Workspace:
                         item["name"] = name
             return {**info, "name": name}
 
-    def cancel_read(self, key):
+    def cancel_job(self, key):
         with self.lock:
             job = self.snapshot(key)
-            if job["status"] != "running" or job["plan"]["action"] != "read":
-                raise ValueError("only a running read can be stopped")
+            if job["status"] != "running" or not job.get("cancellable"):
+                raise ValueError("this operation cannot stop after flash modification has started")
             self.jobs[key]["cancel_requested"] = True
             return self.snapshot(key)
 
@@ -183,15 +183,15 @@ class Workspace:
             raise ValueError("unsupported operation or mode; live hardware only")
         if target in chips.CHIPS and chips.CHIPS[target].read_only and action in MUTATING:
             raise ValueError("Selected target is a read-only profile")
-        frequency = number(request.get("frequency", 500000), "frequency", 30_000_000)
+        frequency = number(request.get("frequency", self.frequency), "frequency", 30_000_000)
         fast_read = request.get("fast_read", False)
         if type(fast_read) is not bool:
             raise ValueError("fast_read must be a boolean")
         read_delay_us = number(request.get("read_delay_us", 10), "read delay", 1000)
         if read_delay_us < 1:
             raise ValueError("read delay must be 1..1000 microseconds")
-        if fast_read and (target != "spc5748g" or action != "read"):
-            raise ValueError("queued reads are available only for MPC5748G Read operations")
+        if fast_read and (target != "spc5748g" or action not in ("read", "write", "program", "erase", "verify", "blank")):
+            raise ValueError("queued memory reads are available only for MPC5748G flash operations")
         if fast_read and frequency < 100000:
             raise ValueError("queued reads require a JTAG clock of at least 100 kHz")
         if frequency < 100:
@@ -251,7 +251,7 @@ class Workspace:
                     if address % unit or size % unit:
                         raise ValueError(f"Program requires complete aligned {unit}-byte ECC units")
         if "fast_read" not in request:
-            fast_read = (target == "spc5748g" and action == "read" and frequency >= 100000
+            fast_read = (target == "spc5748g" and action in ("read", "write", "program", "erase", "verify", "blank") and frequency >= 100000
                          and bool(blocks) and all(b.region == "CFLASH" for b in blocks))
         backups = (backup_blocks(chips.CHIPS[target], address, size)
                    if target in chips.CHIPS and action in ("program", "install_password") else blocks)
@@ -267,6 +267,8 @@ class Workspace:
         plan["notes"] = []
         if fast_read:
             plan["notes"].append(f"Queued CFLASH read; {read_delay_us} microsecond settling delay. Every word's status is checked; a target that is not ready falls back to standard reads.")
+            if action in ("write", "program"):
+                plan["notes"].append("MPC5748 CFLASH uses 128-byte programming for complete nonblank quad-pages. Buffer transfers are hardware checked; full programming timing awaits a write benchmark.")
         if any(b.kind == "otp" for b in blocks) and action in MUTATING:
             plan["notes"].append("One-time programming: only erased ECC units may be written. No erase or rollback is possible.")
             plan["notes"].append("Backup covers only the affected OTP units; unrelated factory ECC tests and password slots are not read.")
@@ -297,6 +299,8 @@ class Workspace:
             key = uuid.uuid4().hex
             job = {"id": key, "plan": plan, "status": "running", "phase": "Opening session",
                    "progress": 0, "logs": [], "started": time.time(), "result": {}}
+            job["cancellable"] = (plan["action"] in ("read", "verify", "blank") or
+                                  plan["target"] in chips.CHIPS and plan["action"] in ("write", "erase", "program"))
             self.jobs[key] = job
             self.active = key
             threading.Thread(target=self._run, args=(job,), daemon=True).start()
@@ -330,6 +334,7 @@ class Workspace:
                 yield session.flash
 
     def _run(self, job):
+        operation_started = time.monotonic()
         plan = job["plan"]
         action, target = plan["action"], plan["target"]
         backup_dir = self.directory / "backups" / job["id"]
@@ -338,8 +343,9 @@ class Workspace:
 
         def progress(phase, done, total):
             with self.lock:
-                if action == "read" and job.get("cancel_requested"):
-                    raise ReadCancelled("Read stopped. No completed dump was saved.")
+                if job.get("cancellable") and job.get("cancel_requested"):
+                    raise ReadCancelled("Read stopped. No completed dump was saved." if action == "read" else
+                                        "Operation stopped before flash modification. Flash was not changed.")
                 job["phase"] = f"{action.capitalize()} · {phase}"
                 # Only successful finalization may display 100%.
                 fraction = round(100 * done / total) if total else 0
@@ -350,6 +356,14 @@ class Workspace:
             self._log(job, f"Backup saved: {len(originals)} ranges with SHA-256 manifest.")
             with self.lock:
                 job["result"]["backup_path"] = str(backup_dir)
+
+        def before_modify():
+            # Atomically close the cancellation window before any lock changes
+            # or erase/program pulse. Never interrupt a partially rewritten block.
+            with self.lock:
+                if job.get("cancel_requested"):
+                    raise ReadCancelled("Operation stopped before flash modification. Flash was not changed.")
+                job["cancellable"] = False
 
         try:
             self._log(job, "Opening Tigard channel B. MCU memory operations reset and halt the target.")
@@ -367,6 +381,10 @@ class Workspace:
                 data = self.file(plan["file_id"])[1].read_bytes() if plan["file_id"] else None
                 self._log(job, f"{action.replace('_', ' ').capitalize()} {plan['length']:,} bytes at 0x{plan['address']:08X}.")
                 with self._backend(plan, progress) as flash:
+                    if isinstance(flash, Flash):
+                        flash.before_modify = before_modify
+                    if plan.get("fast_read"):
+                        self._log(job, f"Queued CFLASH reads enabled for data, backups and verification; {plan['read_delay_us']} microseconds delay.")
                     authentication = getattr(flash, "authentication", None)
                     if authentication:
                         result["authentication"] = authentication
@@ -377,8 +395,6 @@ class Workspace:
                         result["message"] = authentication["message"]
                     elif action == "read":
                         started = time.monotonic()
-                        if plan.get("fast_read"):
-                            self._log(job, f"Queued read enabled; settling delay {plan['read_delay_us']} microseconds.")
                         progress("read", 0, plan["length"])
                         data = flash.read(plan["address"], plan["length"])
                         elapsed = time.monotonic() - started
@@ -439,7 +455,12 @@ class Workspace:
                             flash.erase(plan["address"], plan["length"])
                         result["message"] = ("SHADOW user area erased; security/boot configuration restored and verified."
                                              if any(b.kind == "shadow" for b in blocks) else "Erase complete. Blank check passed.")
+            if plan.get("fast_read") and action != "read":
+                result["fast_read_fallback"] = bool(flash.memory.fast_read_fallback)
+                if result["fast_read_fallback"]:
+                    self._log(job, "Target not ready after queued delay; remaining reads and program-buffer transfers used polling.")
             self._log(job, result["message"])
+            self._log(job, f"{action.replace('_', ' ').capitalize()} finished in {time.monotonic() - operation_started:.2f} s.")
             final_status = "complete"
             with self.lock:
                 job.update(phase="Finishing", progress=100)
@@ -452,6 +473,7 @@ class Workspace:
             with self.lock:
                 job.update(phase="Failed", error=str(exc))
         finally:
+            result["operation_seconds"] = round(time.monotonic() - operation_started, 3)
             self._plan_secrets.pop(plan["id"], None)
             if backup_dir.exists():
                 try:
@@ -464,6 +486,7 @@ class Workspace:
                 except Exception as exc:
                     self._log(job, f"Backup ZIP export failed; original backup remains at {backup_dir}: {exc}")
             with self.lock:
+                job["cancellable"] = False
                 job["result"].update(result)
                 job.update(status=final_status, phase=final_status.capitalize())
                 job["finished"] = time.time()
@@ -539,7 +562,7 @@ class Handler(BaseHTTPRequestHandler):
                     elif path == "/api/rename":
                         response = workspace.rename_file(request.get("file_id"), request.get("name"))
                     elif path == "/api/cancel":
-                        response = workspace.cancel_read(request.get("job_id"))
+                        response = workspace.cancel_job(request.get("job_id"))
                     else:
                         self._send(404, {"error": "not found"})
                         return
@@ -572,7 +595,7 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def make_server(directory, port=8765, allow_hardware=True, url=DEFAULT_URL, reset_pin="srst",
-                initial_mode="hardware", frequency=500000):
+                initial_mode="hardware", frequency=DEFAULT_FREQUENCY):
     number(port, "port", 65535)
     server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
     try:

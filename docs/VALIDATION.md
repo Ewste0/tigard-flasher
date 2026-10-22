@@ -97,6 +97,36 @@ reopening the adapter without MCU reset confirmed core states `0x209`,
 The GW LED's meaning is board-specific; core debug status is the evidence
 for the halt state, rather than LED activity alone.
 
+## Faster flash operations — 2026-10-22
+
+Version 0.7.0 defaults to 5 MHz and extends queued reads to CFLASH backups,
+blank checks and verification. Complete nonblank 128-byte aligned MPC5748
+CFLASH groups use one programming pulse, following the quad-page capability in
+[NXP's MPC5748G data sheet, table 29](https://www.nxp.com/docs/en/data-sheet/MPC5748G.pdf).
+Each queued buffer write uses the single-word protocol in
+[AN4365 section 3.2](https://www.nxp.com/docs/en/application-note/AN4365.pdf).
+All captured write statuses must succeed before EHV is asserted. No queued
+command starts a program/erase pulse. A failed buffer is never retried or committed.
+OTP, partial pages and all-ones ECC units retain the original programming path.
+
+A hardware test loaded a 128-byte volatile program buffer in 0.003999 s at
+5 MHz and then discarded it without an EHV pulse. Config was identical before
+and after. This verifies buffer transport, **not** a completed programming pulse
+or an end-to-end write time. The earlier full-array erase was stopped while
+still backing up, before array erasure began. No new erase or programming test
+was run for this version; a selected rewrite image is still required.
+The deployed UI/API started at 5 MHz without a clock override. Config Verify
+completed in 1.278 s with queued access and matched the saved standard dump;
+Write and Erase plans also selected queued reads by default. Those two plans
+were inspected only and were not executed.
+
+Offline tests exercise quad-page boundaries, partial pages, OTP exclusion,
+all-ones units, pulse count, exact byte order, delayed writes and bus/USB errors.
+Cancellation tests cover backup and the final pre-mutation checkpoint; after
+modification starts, cancellation is rejected and the operation finishes.
+PEmicro-equivalent erase/write speed has not been established. This remains a
+host-driven implementation, with no target-resident programming loader.
+
 ## Queued CFLASH bench validation — 2026-10-22
 
 Version 0.6.1 makes queued reads the default for MPC5748G CFLASH in the UI,

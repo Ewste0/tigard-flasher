@@ -56,7 +56,7 @@ class HardwareContractTests(unittest.TestCase):
             flash = SpiNor.open(PARTS['w25q128jv'])
             factory.assert_called_once_with(cs_count=1)
             factory.return_value.configure.assert_called_once_with('ftdi://ftdi:2232h/2')
-            factory.return_value.get_port.assert_called_once_with(cs=0, freq=1000000, mode=0)
+            factory.return_value.get_port.assert_called_once_with(cs=0, freq=5000000, mode=0)
             flash.close()
             flash.close()
         factory.return_value.terminate.assert_called_once()
@@ -120,7 +120,7 @@ class HardwareContractTests(unittest.TestCase):
             with self.assertRaises(DriverError):
                 with TargetSession(SPC5748G, reset_pin='trst'):
                     pass
-            opened.assert_called_once_with('ftdi://ftdi:2232h/2', 500000, reset_pin='trst')
+            opened.assert_called_once_with('ftdi://ftdi:2232h/2', 5000000, reset_pin='trst')
 
 
 if __name__ == '__main__':

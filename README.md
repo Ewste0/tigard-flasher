@@ -17,10 +17,15 @@ Screenshot uses generated test bytes; no firmware or connected target is shown.
 ## Features
 
 - Read, patch write, program, verify, erase, and blank check for supported flash regions.
+- 5 MHz interface clock by default; lower clocks remain selectable.
 - Queued MPC5748G CFLASH reads are the default at 100 kHz or faster, with an adjustable
   settling delay and automatic polling fallback if the target is not ready.
   **Settings → MPC5748 CFLASH reading → Standard** selects polling manually.
   A full 6,225,920-byte dump took about four minutes at 5 MHz on the tested board.
+- The same queued reads accelerate Write/Erase backups, blank checks and verification.
+  Complete MPC5748 CFLASH quad-pages use 128-byte programming; other cases retain
+  the original ECC-unit path. Buffer transfers passed a hardware check; actual
+  programming timing has not yet been measured.
 - OTP read, program once, verify, and blank check; SHADOW writes preserve valid configuration.
 - Family-specific password lengths, SPC560/MPC5748G password entry, and password installation.
   Protected-target C55 unlocking remains unvalidated; SPC58 JTAG login and HSM programming remain unavailable. See [security operations](docs/SECURITY_OPERATIONS.md).
@@ -28,7 +33,8 @@ Screenshot uses generated test bytes; no firmware or connected target is shown.
 - MPC5748G UTEST presets exclude the factory ECC test area. The default UTEST
   file starts at `0x004000A0`; it is not a complete 16 KiB raw image.
 - Continuous virtualized hex/ASCII viewer for raw binaries up to 16 MiB, offset navigation,
-  named saves, SHA-256, drag-and-drop, and cancellable reads.
+  named saves, SHA-256, drag-and-drop, and cancellable reads. Write/Erase may be
+  stopped during backup/preflight, before the first flash modification.
 - Interactive Tigard/14-pin/10-pin/SPI wiring guides, USB presence, and target identification.
 - Reviewed write plans, original-block backups (OTP: affected units) with checksums, preserved bytes outside
   a patch, and automatic verification.
@@ -146,10 +152,18 @@ MPC5748G CFLASH reads use queued mode automatically at 100 kHz or faster in the
 UI, API and CLI. The default settling delay is 10 µs; adjust it with
 `--read-delay-us`. Use `--standard-read` for polling, or `--fast-read` to require
 queued mode explicitly. API clients can set `fast_read: false` to select polling.
-Other regions, devices and operations keep standard access. On another board,
+Queued access also covers CFLASH backups, verification and blank checks during
+Write/Erase. Complete aligned nonblank 128-byte groups use quad-page programming.
+`--standard-read` (or the UI Standard option) restores polling and single-unit
+programming. OTP and other devices keep standard access. On another board,
 compare a Config dump with a standard read first. The session log reports actual
 read time, throughput and any fallback to polling.
 See [read-performance validation](docs/VALIDATION.md#queued-cflash-bench-validation--2026-10-22).
+
+To replace an image, use **Write** directly: it backs up the affected blocks,
+skips unchanged blocks, erases changed blocks, programs and verifies them.
+A separate full-array erase duplicates work. Stop is available before flash
+modification; after that point the operation completes its programming and verification.
 
 ## License and attribution
 

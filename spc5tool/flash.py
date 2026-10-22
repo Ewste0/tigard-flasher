@@ -5,6 +5,7 @@ from contextlib import contextmanager
 
 from .errors import DriverError, NexusBusError, OperationTimeout, VerificationError
 from .geometry import select_blocks
+from .mpsse import MpsseError
 
 DONE, PEG, PGM, ERS, EHV = 0x400, 0x200, 0x10, 4, 1
 ERRORS = 0xC000  # EER, RWE; W1C
@@ -18,6 +19,8 @@ class Flash:
         self.progress = progress or (lambda phase, done, total: None)
         self.c55 = chip.algorithm.startswith("c55")
         self.poisoned = False
+        self.before_modify = lambda: None
+        self.bulk_program = False
 
     @contextmanager
     def stage(self, name, start=0, end=1):
@@ -124,11 +127,13 @@ class Flash:
             if not status & PEG or status & (ERRORS | (0xF0000000 if self.c55 else 0)):
                 raise DriverError(f"flash operation failed: MCR=0x{status:08x}")
         finally:
-            self._finish(base, mode)
+            if not self.poisoned:
+                self._finish(base, mode)
 
     @contextmanager
     def _unlocked(self, blocks):
         """Change only selected volatile lock bits; restore original locks."""
+        self.before_modify()
         masks = {}
         for b in blocks:
             masks[(b.controller, b.bank)] = masks.get((b.controller, b.bank), 0) | b.mask
@@ -227,16 +232,37 @@ class Flash:
                               else "program requires erased flash; use write for an erase/preserve/program cycle")
         with self._unlocked(blocks):
             block_index = 0
-            for offset in range(0, len(data), unit):
+            offset = 0
+            while offset < len(data):
                 dest = address + offset
                 while dest >= blocks[block_index].end:
                     block_index += 1
-                word = data[offset:offset + unit]
-                if word != b"\xff" * unit:
+                block = blocks[block_index]
+                count = unit
+                # C55 quad-page programming: 128 aligned bytes per pulse.
+                # Keep partial pages, all-ones ECC units and OTP on the original
+                # single-unit path; never cross a block or quad-page boundary.
+                if (self.bulk_program and self.chip.key == "spc5748g" and block.region == "CFLASH"
+                        and dest % 128 == 0 and offset + 128 <= len(data) and dest + 128 <= block.end
+                        and all(data[n:n + unit] != b"\xff" * unit for n in range(offset, offset + 128, unit))):
+                    count = 128
+                word = data[offset:offset + count]
+                if word != b"\xff" * count:
                     with self._operation(blocks[block_index].controller, PGM):
-                        for n in range(0, unit, 4):
-                            self.memory.write32(dest + n, int.from_bytes(word[n:n + 4], "big"))
-                self.progress("program", round(0.1 + 0.8 * (offset + unit) / len(data), 12), 1)
+                        if count == 128 and getattr(self.memory, "fast_read", False) and hasattr(self.memory, "write_program_buffer"):
+                            try:
+                                self.memory.write_program_buffer(dest, word)
+                            except MpsseError:
+                                # The TAP position is unknown after a short USB
+                                # transfer. No EHV is queued by the buffer load;
+                                # stop without issuing any more bus writes.
+                                self.poisoned = True
+                                raise
+                        else:
+                            for n in range(0, count, 4):
+                                self.memory.write32(dest + n, int.from_bytes(word[n:n + 4], "big"))
+                offset += count
+                self.progress("program", round(0.1 + 0.8 * offset / len(data), 12), 1)
         with self.stage("verify", 0.9, 1):
             self.verify(address, data)
 

@@ -2,7 +2,7 @@
 import math
 from .errors import DriverError
 from .idcode import decode
-from .mpsse import MpsseTransport, MpsseError, DEFAULT_URL
+from .mpsse import MpsseTransport, MpsseError, DEFAULT_URL, DEFAULT_FREQUENCY
 from .tap import JtagTap
 from .once import OnCE
 from .memory import OnceMemory, NexusMemory
@@ -11,7 +11,7 @@ from .security import validate_login, login_result
 
 
 class TargetSession:
-    def __init__(self, chip, url=DEFAULT_URL, frequency=500000, expected_id=None, *,
+    def __init__(self, chip, url=DEFAULT_URL, frequency=DEFAULT_FREQUENCY, expected_id=None, *,
                  reset_pin="srst", password=None, prepare_flash=True,
                  fast_read=False, read_delay_us=10):
         self.chip, self.url, self.frequency = chip, url, frequency
@@ -108,6 +108,7 @@ class TargetSession:
             if self.fast_read:
                 self.memory.read_idle_clocks = max(1, math.ceil(self.frequency * self.read_delay_us / 1_000_000))
                 self.memory.fast_read = True
+                self.flash.bulk_program = True  # Flash restricts quad-pages to MPC5748 CFLASH.
             return self
         except BaseException:
             self.transport.close()

@@ -74,7 +74,7 @@ class WebTests(unittest.TestCase):
         _, state = self.call("/api/status")
         self.assertTrue(state["hardware_enabled"])
         self.assertEqual(state["initial_mode"], "hardware")
-        self.assertEqual(state["frequency"], 500000)
+        self.assertEqual(state["frequency"], 5000000)
         self.assertEqual(state["reset_pin"], "srst")
         self.server.workspace.reset_pin = "trst"
         self.assertEqual(self.call("/api/status")[1]["reset_pin"], "trst")
@@ -97,6 +97,8 @@ class WebTests(unittest.TestCase):
         state = workspace.status()
         self.assertEqual(state["initial_mode"], "hardware")
         self.assertEqual(state["frequency"], 100000)
+        plan = workspace.plan(self.payload('spc5748g', address=0xFA8000))
+        self.assertEqual(plan['frequency'], 100000)
         self.assertEqual(state["reset_pin"], "trst")
         self.assertEqual(state["jobs"], [])
         self.assertIsNone(state["active"])
@@ -289,6 +291,78 @@ class WebTests(unittest.TestCase):
             self.assertNotIn('file', final['result'])
             self.assertEqual(workspace.files, {})
             self.assertEqual(self.call('/api/cancel', {'job_id': job['id']})[0], 400)
+
+    def test_mutation_cancel_at_backup_or_after_backup_never_erases(self):
+        from spc5tool.flash import Flash
+        from tests.simulator import SimMemory
+        from spc5tool.chips import SPC5748G
+        from contextlib import contextmanager
+        for action in ('erase', 'write', 'program'):
+            for checkpoint in ('backup', 'before_modify'):
+                with self.subTest(action=action, checkpoint=checkpoint):
+                    entered, release = threading.Event(), threading.Event()
+                    memory = SimMemory(SPC5748G)
+                    workspace = self.server.workspace
+                    @contextmanager
+                    def backend(plan, progress):
+                        flash = Flash(memory, SPC5748G, progress=progress)
+                        if checkpoint == 'backup':
+                            original_read = flash.read
+                            def read(*args):
+                                entered.set()
+                                release.wait(5)
+                                return original_read(*args)
+                            flash.read = read
+                        else:
+                            original_unlock = flash._unlocked
+                            @contextmanager
+                            def unlocked(blocks):
+                                entered.set()
+                                release.wait(5)
+                                with original_unlock(blocks):
+                                    yield
+                            flash._unlocked = unlocked
+                        yield flash
+                    image = workspace.add_file('cancel-test.bin', bytes(range(128)))
+                    with patch.object(workspace, '_backend', backend):
+                        plan = workspace.plan(self.payload('spc5748g', action=action, address=0xFA8000,
+                                                           length=0x4000, file_id=image['id']))
+                        job = workspace.start(plan['id'])
+                        self.assertTrue(entered.wait(2))
+                        try:
+                            self.assertEqual(self.call('/api/cancel', {'job_id': job['id']})[0], 200)
+                        finally:
+                            release.set()
+                        deadline = time.monotonic() + 5
+                        while workspace.active and time.monotonic() < deadline:
+                            time.sleep(0.01)
+                    final = workspace.snapshot(job['id'])
+                    self.assertEqual(final['status'], 'cancelled', final)
+                    self.assertFalse(any(a == 0xFFFE0000 and v & 0x15 for a, v in memory.log))
+                    self.assertEqual(memory.read(0xFA8000, 0x4000), b'\xff' * 0x4000)
+
+    def test_cancel_refused_after_first_mutation_and_operation_completes(self):
+        from spc5tool.flash import Flash
+        entered, release = threading.Event(), threading.Event()
+        original_wait = Flash._wait_done
+        def waiting(flash, base):
+            entered.set()
+            release.wait(5)
+            return original_wait(flash, base)
+        workspace = self.server.workspace
+        with patch.object(Flash, '_wait_done', waiting):
+            plan = workspace.plan(self.payload('spc5748g', action='erase', address=0xFA8000, length=0x4000))
+            job = workspace.start(plan['id'])
+            self.assertTrue(entered.wait(2))
+            try:
+                self.assertFalse(workspace.snapshot(job['id'])['cancellable'])
+                self.assertEqual(self.call('/api/cancel', {'job_id': job['id']})[0], 400)
+            finally:
+                release.set()
+            deadline = time.monotonic() + 5
+            while workspace.active and time.monotonic() < deadline:
+                time.sleep(0.01)
+        self.assertEqual(workspace.snapshot(job['id'])['status'], 'complete')
 
     def test_adapter_detection_does_not_open_a_jtag_session(self):
         from types import SimpleNamespace, ModuleType

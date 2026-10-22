@@ -13,7 +13,7 @@ from .files import save_backup, write_new, sha256
 from .flash import Flash
 from .geometry import Block, backup_blocks, blocks_for, select_blocks
 from .idcode import read_idcode
-from .mpsse import MpsseTransport, DEFAULT_URL
+from .mpsse import MpsseTransport, DEFAULT_URL, DEFAULT_FREQUENCY
 from .session import TargetSession
 from .spi import SpiNor, PARTS
 from .security import parse_password, password_address, provision, installation_message
@@ -103,7 +103,7 @@ def _operation(args):
     size = len(data) if data is not None else args.length
     blocks = _blocks(args, args.address, size, whole=args.action == "erase")
     if getattr(args, "fast_read", False) is None:
-        args.fast_read = (not args.spi and args.chip == "spc5748g" and args.action == "read"
+        args.fast_read = (not args.spi and args.chip == "spc5748g" and args.action in ("read", "write", "program", "erase", "verify", "blank")
                           and args.freq >= 100000 and all(b.region == "CFLASH" for b in blocks))
     if getattr(args, "fast_read", False) and (args.chip != "spc5748g" or any(b.region != "CFLASH" for b in blocks)):
         raise ValueError("queued reads are currently limited to MPC5748G CFLASH")
@@ -228,7 +228,7 @@ def _common(parser, spi):
 
 def _connection(parser):
     parser.add_argument("--url", default=DEFAULT_URL)
-    parser.add_argument("--freq", type=integer, default=500000, help="TCK/SPI clock in Hz")
+    parser.add_argument("--freq", type=integer, default=DEFAULT_FREQUENCY, help="TCK/SPI clock in Hz (default: 5000000)")
     parser.add_argument("--expect-idcode", type=integer, help="require this exact JTAG IDCODE (live MCU writes)")
     parser.add_argument("--password-file", type=Path, help="current JTAG password in a local hex-text file; never printed")
     parser.add_argument("--reset-pin", choices=("srst", "trst"), default="srst",
@@ -265,12 +265,12 @@ def _commands(sub, spi=False):
         _common(p, spi)
         _connection(p)
         p.add_argument("--address", required=True, type=integer, help="physical address (not file offset)")
-        if action == "read" and not spi:
+        if action in ("read", "write", "program", "erase", "verify", "blank") and not spi:
             read_mode = p.add_mutually_exclusive_group()
             read_mode.add_argument("--fast-read", action="store_true", default=None,
-                                   help="queued MPC5748G CFLASH reads (default for this region at 100 kHz or faster)")
+                                   help="queued MPC5748G CFLASH access and quad-page programming (default at 100 kHz or faster)")
             read_mode.add_argument("--standard-read", action="store_false", dest="fast_read",
-                                   help="use standard polling reads instead of queued reads")
+                                   help="use standard polling and single-unit programming")
             p.add_argument("--read-delay-us", type=integer, default=10, help="queued read settling delay, 1..1000 microseconds (default: 10)")
         if action in ("read", "erase", "plan", "blank"):
             p.add_argument("--length", required=True, type=integer)
@@ -292,7 +292,7 @@ def build_parser():
     gui.add_argument("--workspace", type=Path, default=Path(".spc5tool-ui"))
     gui.add_argument("--allow-hardware", action="store_true", default=True, help=argparse.SUPPRESS)
     gui.add_argument("--mode", choices=("hardware",), default="hardware", help=argparse.SUPPRESS)
-    gui.add_argument("--freq", type=integer, default=500000, help="initial interface clock in Hz")
+    gui.add_argument("--freq", type=integer, default=DEFAULT_FREQUENCY, help="initial interface clock in Hz (default: 5000000)")
     gui.add_argument("--open-browser", action="store_true", help="open the local page in your default browser")
     gui.add_argument("--url", default=DEFAULT_URL)
     gui.add_argument("--reset-pin", choices=("srst", "trst"), default="srst",
@@ -301,7 +301,7 @@ def build_parser():
     gui.set_defaults(func=serve)
     ident = sub.add_parser("idcode", help="read JTAG identification only (no MCU reset)")
     ident.add_argument("--url", default=DEFAULT_URL)
-    ident.add_argument("--freq", type=integer, default=500000)
+    ident.add_argument("--freq", type=integer, default=DEFAULT_FREQUENCY)
     ident.set_defaults(func=_idcode)
     _commands(sub)
     spi = sub.add_parser("spi", help="Winbond SPI NOR on Tigard channel B")

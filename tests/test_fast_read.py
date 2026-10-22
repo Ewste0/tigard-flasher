@@ -207,7 +207,7 @@ class FastReadTests(unittest.TestCase):
                  (['read', 'spc58nh92'], '0x1000000', [], False),
                  (['read', 'spc560b64'], '0', [], False),
                  (['spi', 'read', 'w25q128jv'], '0', [], False),
-                 (['blank', 'mpc5748g'], '0xFA8000', [], False)]
+                 (['blank', 'mpc5748g'], '0xFA8000', [], True)]
         for command, address, options, expected in cases:
             with self.subTest(command=command, address=address, options=options), tempfile.TemporaryDirectory() as directory:
                 output = [str(Path(directory) / 'dump.bin')] if 'read' in command else []
@@ -226,14 +226,13 @@ class FastReadTests(unittest.TestCase):
             image = workspace.add_file('test.bin', bytes(256), 'image')
             cases = [{'fast_read': False}, {'frequency': 1000}, {'address': 0x400100},
                      {'target': 'spc58nh92', 'address': 0x1000000}, {'target': 'spc560b64', 'address': 0},
-                     {'target': 'w25q128jv', 'address': 0}, {'action': 'identify'}, {'action': 'blank'},
-                     {'action': 'verify', 'file_id': image['id']},
-                     {'action': 'write', 'file_id': image['id'], 'expected_id': 0x0988101D},
-                     {'action': 'erase', 'length': 0x4000, 'expected_id': 0x0988101D},
-                     {'action': 'program', 'file_id': image['id'], 'expected_id': 0x0988101D}]
+                     {'target': 'w25q128jv', 'address': 0}, {'action': 'identify'}]
             for update in cases:
                 with self.subTest(update=update):
                     self.assertFalse(workspace.plan({**request, **update})['fast_read'])
+            for action in ('read', 'blank', 'verify', 'write', 'erase', 'program'):
+                plan = workspace.plan({**request, 'action': action, 'length': 0x4000, 'file_id': image['id'], 'expected_id': 0x0988101D})
+                self.assertTrue(plan['fast_read'], action)
 
     def test_api_limits_queue_to_cflash_read(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -244,7 +243,7 @@ class FastReadTests(unittest.TestCase):
             self.assertTrue(plan['fast_read'])
             self.assertEqual(plan['read_delay_us'], 10)
             self.assertFalse(workspace.plan({**request, 'fast_read': False})['fast_read'])
-            for update in ({'action': 'verify'}, {'target': 'spc58nh92'}, {'fast_read': 'true'}, {'fast_read': None},
+            for update in ({'action': 'identify'}, {'target': 'spc58nh92'}, {'fast_read': 'true'}, {'fast_read': None},
                            {'address': 0x400100}, {'read_delay_us': 0}, {'read_delay_us': 1001},
                            {'frequency': 1000}):
                 with self.subTest(update=update), self.assertRaises(ValueError):

@@ -16,6 +16,9 @@ class LiveOnlyTests(unittest.TestCase):
         args = parser.parse_args(['gui'])
         self.assertEqual(args.mode, 'hardware')
         self.assertTrue(args.allow_hardware)
+        for command in (['gui'], ['idcode'], ['probe', 'mpc5748g'], ['spi', 'probe', 'w25q128jv']):
+            self.assertEqual(parser.parse_args(command).freq, 5_000_000)
+            self.assertEqual(parser.parse_args(command + ['--freq', '100000']).freq, 100000)
         for arguments in (['gui', '--mode', 'simulation'],
                           ['read', 'mpc5748g', 'unused.bin', '--address', '0xFA8000', '--length', '8', '--simulate'],
                           ['probe', 'mpc5748g', '--state', 'unused.zip']):

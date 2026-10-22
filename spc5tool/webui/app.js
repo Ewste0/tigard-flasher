@@ -25,7 +25,7 @@ for (const element of document.querySelectorAll("[data-icon]")) {
 }
 let targets = [], target, region, file = null, busy = false, ready = false;
 const mode = "hardware";
-let frequency = 500000, expectedId = "", pendingPlan = null, resetPin = "srst";
+let frequency = 5000000, expectedId = "", pendingPlan = null, resetPin = "srst";
 let fastRead = true, readDelayUs = 10;
 let seenLogs = 0, eventCount = 0, toastTimer, previewSequence = 0;
 let activeJob = null, suggestedName = "";
@@ -362,7 +362,7 @@ async function upload(input) {
 }
 function request(action) {
   return {target:target.key, action, mode, frequency, expected_id:expectedId || null,
-    fast_read:fastRead && frequency >= 100000 && action === "read" && target.key === "spc5748g" && document.querySelector('input[name="region"]:checked')?.value === "CFLASH",
+    fast_read:fastRead && frequency >= 100000 && ["read", "write", "program", "erase", "verify", "blank"].includes(action) && target.key === "spc5748g" && document.querySelector('input[name="region"]:checked')?.value === "CFLASH",
     read_delay_us:readDelayUs,
     filename:$("saveName").value, password:target.password_login && action !== "identify" ? $("currentPassword").value : "",
     ...(action === "install_password" ? {new_password:$("newPassword").value, confirm_password:$("confirmPassword").value, password_slot:$("passwordSlot").value} : {}),
@@ -404,9 +404,9 @@ async function run(plan) {
 async function follow(job) {
   activeJob = job.id;
   while (true) {
-    $("stopRead").hidden = !!job.finished || job.plan.action !== "read";
+    $("stopRead").hidden = !!job.finished || !job.cancellable;
     $("stopRead").disabled = !!job.cancel_requested;
-    $("stopRead").textContent = job.cancel_requested ? "Stopping…" : "Stop read";
+    $("stopRead").textContent = job.cancel_requested ? "Stopping…" : job.plan.action === "read" ? "Stop read" : ["write", "erase", "program"].includes(job.plan.action) ? "Stop before changes" : "Stop";
     $("jobProgress").value = job.progress;
     if (!job.finished) { $("statusText").textContent = job.plan.action.replaceAll("_", " "); $("statusDetail").textContent = job.phase; }
     $("progressText").textContent = `${job.progress}%`;
@@ -475,7 +475,7 @@ $("readScope").addEventListener("change", () => applyPreset($("readScope").value
 $("stopRead").addEventListener("click", async () => {
   if (!activeJob) return;
   $("stopRead").disabled = true;
-  try { await api("/api/cancel", {job_id:activeJob}); log("Stopping read after the current transfer…"); }
+  try { await api("/api/cancel", {job_id:activeJob}); log("Stop requested; waiting for a safe checkpoint…"); }
   catch (error) { message(error); }
 });
 $("familySelect").addEventListener("change", setFamily); $("chipSelect").addEventListener("change", setTarget);
@@ -519,7 +519,7 @@ async function initialize() {
   try {
     const state = await api("/api/status"); targets = state.targets; resetPin = state.reset_pin || "srst";
     if (!state.hardware_enabled || state.initial_mode !== "hardware") throw new Error("Restart the app with the current live-only server.");
-    frequency = state.frequency || 500000;
+    frequency = state.frequency || 5000000;
     if (![...$("frequencySelect").options].some(option => Number(option.value) === frequency)) {
       $("frequencySelect").add(new Option(`${frequency.toLocaleString()} Hz`, String(frequency)));
     }

@@ -60,6 +60,7 @@ BIT_NSRST = 0x20        # BD5, active-low
 FTDI_MPSSE_CLOCK = 60_000_000  # 60 MHz base after disabling the /5 prescaler
 
 DEFAULT_URL = "ftdi://ftdi:2232h/2"   # interface 2 == channel B
+DEFAULT_FREQUENCY = 5_000_000
 
 
 class MpsseError(DriverError):
@@ -81,7 +82,7 @@ class MpsseTransport:
 
     # ---- construction ----
     @classmethod
-    def open(cls, url: str = DEFAULT_URL, freq: float = 1_000_000.0, *, reset_pin="srst"):
+    def open(cls, url: str = DEFAULT_URL, freq: float = DEFAULT_FREQUENCY, *, reset_pin="srst"):
         """Open the Tigard channel-B MPSSE engine on real hardware via pyftdi."""
         if not math.isfinite(freq) or not 100 <= freq <= 30_000_000:
             raise ValueError("frequency must be between 100 Hz and 30 MHz")

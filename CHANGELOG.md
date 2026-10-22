@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.7.0 — 2026-10-22
+
+- Default the interface clock to 5 MHz across UI, CLI and hardware sessions.
+  Explicit clock overrides remain available; API plans inherit the server clock.
+- Extend queued MPC5748 CFLASH access to Write/Erase backups, blank checks and
+  verification, removing the previous polling-only bottleneck in these steps.
+- Program complete aligned 128-byte MPC5748 CFLASH quad-pages in one pulse,
+  with queued buffer loading and per-word status checks before EHV. Partial pages,
+  all-ones ECC units, OTP and other families keep the original programming path.
+  USB failures stop without committing the buffer; no speculative write retries.
+- Allow Stop during backups and preflight, atomically disabling cancellation
+  before flash modification. Read, Verify and Blank check are also cancellable.
+- Verify a queued 128-byte buffer transfer on hardware without an EHV pulse;
+  Config remained unchanged. Actual erase/write timing awaits a selected image.
+  Record total operation duration. No PEmicro-equivalent performance claim.
+
 ## 0.6.1 — 2026-10-22
 
 - Make queued reading the default for MPC5748G CFLASH Read in the UI, API and

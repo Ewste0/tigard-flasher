@@ -17,7 +17,7 @@ async function main() {
       const mode = "hardware";
       const workspace = mkdtempSync(path.join(os.tmpdir(), "tigard-ui-"));
       const server = spawn((process.env.PYTHON || path.join(root, ".venv/bin/python")), ["-m", "spc5tool", "gui", "--port", "0", "--workspace", workspace, "--reset-pin", reset,
-        ...(mode === "hardware" ? ["--allow-hardware", "--mode", "hardware", "--freq", "100000"] : [])], {cwd:root});
+        ...(reset === "srst" ? ["--freq", "100000"] : [])], {cwd:root});
       let page;
       try {
         const url = await new Promise((resolve, reject) => {
@@ -76,9 +76,9 @@ async function main() {
         assert.equal(queuedPlan.status, 200);
         assert.equal(queuedPlan.body.fast_read, true);
         assert.equal(queuedPlan.body.read_delay_us, 20);
-        assert.equal(queuedPlan.erase, false);
+        assert.equal(queuedPlan.erase, true);
         assert.equal(await page.$eval('[data-operation="program"]', node => node.hidden && node.disabled), true);
-        assert.equal(await page.$eval("#clockValue", node => node.textContent), mode === "hardware" ? "100 kHz" : "500 kHz");
+        assert.equal(await page.$eval("#clockValue", node => node.textContent), reset === "srst" ? "100 kHz" : "5 MHz");
         await page.click("#wiringButton");
         assert.equal(await page.$eval("#targetConnector", node => node.children.length), 14);
         assert.equal(await page.$eval("#wiringConfig", node => node.textContent), `Session reset: ${reset.toUpperCase()}`);

@@ -147,6 +147,9 @@ class SimMemory(WordMemory):
             address = c["interlock"]
             block = next(b for b in self.blocks if b[0] <= address < b[0] + b[1])
             unit = 16 if self.chip.algorithm == 'c55-spc58h' else 8
+            if (self.chip.key == 'spc5748g' and 0xF90000 <= address < 0x1580000
+                    and address % 128 == 0 and len(c["pending"]) == 32):
+                unit = 128
             good = address % unit == 0 and set(c["pending"]) == set(range(address, address + unit, 4)) and self._unlocked(block)
             if good:
                 data, start = self._region(address, unit)
