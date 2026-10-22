@@ -1,6 +1,6 @@
 # OTP, SHADOW and passwords
 
-This document describes version 0.6.0. Most OTP/password paths have only offline
+This document describes version 0.6.1. Most OTP/password paths have only offline
 tests. One MPC5748G has limited UTEST and installed-password checks; see
 [VALIDATION.md](VALIDATION.md). Unlocking a protected MPC5748G is not yet bench
 validated.

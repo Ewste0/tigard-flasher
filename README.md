@@ -5,7 +5,7 @@ CLI, and automated tests with isolated device models. Uses Tigard's FT2232H chan
 No account or subscription is needed. The application runs locally; GitHub hosts
 the source and release downloads, not a web service that accesses USB.
 
-**Hardware validation is limited to one MPC5748G board: configuration and UTEST
+**Hardware validation is limited to one MPC5748G board: full CFLASH, configuration and UTEST
 config/user reads, plus one configuration-block write with a matching readback.** Other profiles
 have offline tests only.
 See the [feature audit](docs/FEATURE_AUDIT.md) and [validation record](docs/VALIDATION.md).
@@ -17,9 +17,10 @@ Screenshot uses generated test bytes; no firmware or connected target is shown.
 ## Features
 
 - Read, patch write, program, verify, erase, and blank check for supported flash regions.
-- Optional queued MPC5748G CFLASH reads reduce USB waits and provide an adjustable
-  settling delay. Enable **Settings → MPC5748 CFLASH reading → Queued** to test it;
-  standard reads remain the default. Hardware speed validation is pending.
+- Queued MPC5748G CFLASH reads are the default at 100 kHz or faster, with an adjustable
+  settling delay and automatic polling fallback if the target is not ready.
+  **Settings → MPC5748 CFLASH reading → Standard** selects polling manually.
+  A full 6,225,920-byte dump took about four minutes at 5 MHz on the tested board.
 - OTP read, program once, verify, and blank check; SHADOW writes preserve valid configuration.
 - Family-specific password lengths, SPC560/MPC5748G password entry, and password installation.
   Protected-target C55 unlocking remains unvalidated; SPC58 JTAG login and HSM programming remain unavailable. See [security operations](docs/SECURITY_OPERATIONS.md).
@@ -141,11 +142,14 @@ node tests/test_wiring.cjs
 For browser tests, builds, and GitHub release steps see [CONTRIBUTING.md](CONTRIBUTING.md)
 and [docs/RELEASING.md](docs/RELEASING.md).
 
-Queued CFLASH reads are also available with `read mpc5748g --fast-read
---read-delay-us 10`, alongside the usual address, length, output file and connection
-arguments. Begin with Config only and compare the result with a standard read.
-The session log reports elapsed read time, throughput, and any fallback to polling.
-See [read-performance validation](docs/VALIDATION.md#queued-cflash-reads--2026-10-21).
+MPC5748G CFLASH reads use queued mode automatically at 100 kHz or faster in the
+UI, API and CLI. The default settling delay is 10 µs; adjust it with
+`--read-delay-us`. Use `--standard-read` for polling, or `--fast-read` to require
+queued mode explicitly. API clients can set `fast_read: false` to select polling.
+Other regions, devices and operations keep standard access. On another board,
+compare a Config dump with a standard read first. The session log reports actual
+read time, throughput and any fallback to polling.
+See [read-performance validation](docs/VALIDATION.md#queued-cflash-bench-validation--2026-10-22).
 
 ## License and attribution
 

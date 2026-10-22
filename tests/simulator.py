@@ -11,6 +11,8 @@ from spc5tool.memory import WordMemory
 class SimMemory(WordMemory):
     def __init__(self, chip):
         self.chip = chip
+        # Result metadata only; Nexus queue timing is modeled in test_fast_read.
+        self.fast_read_fallback = False
         self.regions = {r.base: bytearray(b"\xff" * r.size) for r in chip.regions}
         self.c55 = chip.algorithm.startswith("c55")
         bases = (chip.flash_ctrl["FMC"],) if self.c55 else (0xC3F88000, 0xC3F8C000)

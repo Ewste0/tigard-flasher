@@ -1,13 +1,13 @@
 # Local release checks
 
-Version 0.6.0, checked locally on macOS on 2026-10-21. Python 3.13.12,
+Version 0.6.1, checked locally on macOS on 2026-10-22. Python 3.13.12,
 Node.js 25.9.0, Puppeteer 25.14.0, Chrome 155.
 
 | Check | Result |
 | --- | --- |
-| Python unit/API/driver tests | 132 passed |
-| Queued CFLASH read sequence, delayed readiness, stale-data rejection, bus/USB errors | Passed with independent clocked model; no physical performance claim |
-| Read-mode and delay settings; API plan propagation | Passed in browser without hardware jobs |
+| Python unit/API/driver tests | 134 passed |
+| Queued CFLASH read sequence, delayed readiness, stale-data rejection, bus/USB errors | Passed with independent clocked model; live results below |
+| Queued default, Standard override, delay settings; API/CLI operation restrictions | Passed; browser tests start no hardware jobs |
 | JTAG/SPI pin mapping checks | Passed |
 | Browser wiring, presets, filenames, both reset mappings | Passed with mocked USB descriptors; no hardware jobs |
 | OTP buttons, plan review, family password lengths, CFLASH preset region | Passed |
@@ -29,7 +29,10 @@ Node.js 25.9.0, Puppeteer 25.14.0, Chrome 155.
 | Installed-wheel CLI and seven bundled UI routes | Passed in temporary installation |
 | Public source/distribution, relative links and private-input checks | Passed |
 | Updated original local UI | Seven targets; config default, TRST reset, 1 MHz; idle |
-| Current USB detection | Tigard disconnected; queued reads await bench validation |
+| Current USB detection | Tigard connected to MPC5748G, IDCODE 0x0988101D |
+| Full queued CFLASH, 5 MHz / 10 µs | 236.556 s and 197.516 s; 6,225,920 bytes identical; no fallback |
+| Standard comparison | Config plus 39 boundary/start/end samples match queued bytes |
+| Updated live API default | Config reads at 1 MHz / 5 MHz automatically queued; 2.993 s / 1.033 s; match standard bytes |
 | Earlier UTEST config/user read (0.5.1) | 16,224 bytes at 0x004000A0 succeeded at 1 MHz |
 | Earlier MPC5748G password check (0.5.3) | Stored-password match; protected unlock explicitly unverified |
 | Earlier Config read with and without password (0.5.3) | Two full 32 KiB reads matched byte-for-byte at 1 MHz |
@@ -43,5 +46,5 @@ and Customer Delivery password checks in
 not included in the installed application. Unsupported operations and known
 limitations are listed in [SECURITY_OPERATIONS.md](SECURITY_OPERATIONS.md).
 
-The previous hosted revision passed CI. Version 0.6.0 has local results only;
+The previous hosted revision passed CI. Version 0.6.1 has local results only;
 its GitHub Actions matrix must run after these changes are pushed.

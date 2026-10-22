@@ -1,14 +1,14 @@
 # Tigard Flasher feature audit
 
-Reviewed 2026-10-21 for version 0.6.0. This audit lists implemented capabilities
+Reviewed 2026-10-22 for version 0.6.1. This audit lists implemented capabilities
 and their validation limits. Hardware support is limited to the explicit device
 profiles and documented regions.
 
-| Category | Tigard Flasher 0.6.0 | Remaining limitation |
+| Category | Tigard Flasher 0.6.1 | Remaining limitation |
 | --- | --- | --- |
 | SPC/MPC over JTAG | Python TAP, OnCE/Nexus, and flash-controller drivers | Six explicit MCU profiles; additional devices require reviewed profiles and validation |
 | Flash read/write | Read, patch write, program, verify, erase, blank check, backups | Hardware writes tested on one MPC5748 configuration block; UTEST config/user reads also tested |
-| Queued CFLASH reads | Optional MPC5748G read batching with adjustable delay and per-word status checks | Offline tests only; physical speed and three-minute full reads unverified |
+| Queued CFLASH reads | Default MPC5748G CFLASH reads at 100 kHz or faster; adjustable delay, per-word status checks and polling fallback | About four minutes for full CFLASH at 5 MHz on one board; other boards and clocks need separate validation |
 | OTP / SHADOW | OTP read/program/verify/blank; SHADOW preservation | OTP cannot erase; BAF and HSM programming unavailable |
 | Passwords | Family lengths, SPC560/MPC5748G password entry, password installation | MPC5748G stored-password comparison verified in Customer Delivery; protected-target unlock unvalidated; SPC58 login and PASS-group unlock unavailable; no automatic protection activation |
 | SPI flash | W25Q128JV / EF4018 profile with offline tests | Other SPI chips not supported; no SPI bench test |

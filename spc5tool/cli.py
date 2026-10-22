@@ -102,6 +102,9 @@ def _operation(args):
     data = Path(args.file).read_bytes() if args.action in ("write", "program", "verify") else None
     size = len(data) if data is not None else args.length
     blocks = _blocks(args, args.address, size, whole=args.action == "erase")
+    if getattr(args, "fast_read", False) is None:
+        args.fast_read = (not args.spi and args.chip == "spc5748g" and args.action == "read"
+                          and args.freq >= 100000 and all(b.region == "CFLASH" for b in blocks))
     if getattr(args, "fast_read", False) and (args.chip != "spc5748g" or any(b.region != "CFLASH" for b in blocks)):
         raise ValueError("queued reads are currently limited to MPC5748G CFLASH")
     if not args.spi and args.action in MUTATING:
@@ -118,6 +121,8 @@ def _operation(args):
             "preserve_outside_image": args.action == "write", "hardware_validated": False}
     if args.action in MUTATING:
         plan["backup_ranges"] = [{"address": f"0x{b.address:08x}", "size": b.size} for b in backups]
+    if args.action == "read":
+        plan["fast_read"] = getattr(args, "fast_read", False)
     if data is not None:
         plan["sha256"] = sha256(data)
     if args.action == "plan" or (args.action in MUTATING and not args.execute):
@@ -261,7 +266,11 @@ def _commands(sub, spi=False):
         _connection(p)
         p.add_argument("--address", required=True, type=integer, help="physical address (not file offset)")
         if action == "read" and not spi:
-            p.add_argument("--fast-read", action="store_true", help="experimental queued MPC5748G CFLASH reads")
+            read_mode = p.add_mutually_exclusive_group()
+            read_mode.add_argument("--fast-read", action="store_true", default=None,
+                                   help="queued MPC5748G CFLASH reads (default for this region at 100 kHz or faster)")
+            read_mode.add_argument("--standard-read", action="store_false", dest="fast_read",
+                                   help="use standard polling reads instead of queued reads")
             p.add_argument("--read-delay-us", type=integer, default=10, help="queued read settling delay, 1..1000 microseconds (default: 10)")
         if action in ("read", "erase", "plan", "blank"):
             p.add_argument("--length", required=True, type=integer)

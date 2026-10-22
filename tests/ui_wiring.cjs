@@ -59,7 +59,12 @@ async function main() {
         assert.equal(JSON.stringify(loginPlan.body).includes("0123456789ABCDEF"), false);
         await page.$eval("#currentPassword", node => { node.value = ""; });
         await page.click("#settingsButton");
-        assert.equal(await page.$eval("#readModeSelect", node => node.value), "checked");
+        assert.equal(await page.$eval("#readModeSelect", node => node.value), "queued");
+        assert.equal(await page.evaluate(() => request("read").fast_read), true);
+        await page.select("#readModeSelect", "checked");
+        await page.click('#settingsDialog button[value="save"]');
+        assert.equal(await page.evaluate(() => request("read").fast_read), false);
+        await page.click("#settingsButton");
         await page.select("#readModeSelect", "queued");
         await page.$eval("#readDelayUs", node => { node.value = "20"; });
         await page.click('#settingsDialog button[value="save"]');
@@ -111,6 +116,7 @@ async function main() {
         assert.equal(await page.$eval("#addressInput", node => node.value), "0x00FA8000");
         assert.equal(await page.$eval("#lengthInput", node => node.value), "0x00008000");
         await page.click('[name="region"][value="UTEST"]');
+        assert.equal(await page.evaluate(() => request("read").fast_read), false);
         assert.equal(await page.$eval("#readScope", node => node.value), "utest");
         assert.equal(await page.$eval("#addressInput", node => node.value), "0x004000A0");
         assert.equal(await page.$eval("#lengthInput", node => node.value), "0x00003F60");

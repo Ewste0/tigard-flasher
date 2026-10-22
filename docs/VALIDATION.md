@@ -97,9 +97,30 @@ reopening the adapter without MCU reset confirmed core states `0x209`,
 The GW LED's meaning is board-specific; core debug status is the evidence
 for the halt state, rather than LED activity alone.
 
+## Queued CFLASH bench validation — 2026-10-22
+
+Version 0.6.1 makes queued reads the default for MPC5748G CFLASH in the UI,
+API and CLI at 100 kHz or faster. The standard polling override remains available.
+The connected MPC5748G (`IDCODE 0x0988101D`) was checked read-only through
+the live UI job queue, using Tigard channel B and the TRST-to-RESET mapping.
+
+| Check | Result |
+| --- | --- |
+| Full CFLASH, 6,225,920 bytes at `0x00F90000`, 5 MHz, 10 µs delay | First read 236.556 s; repeated read 197.516 s; byte-for-byte identical; no polling fallback |
+| Config, 32,768 bytes at `0x00FA8000` | Saved standard 1 MHz and queued 5 MHz reads match the Config slice of both full dumps |
+| Fresh standard Config at 5 MHz | 25.685 s; matches saved Config; earlier queued Config took 1.208 s at the same clock |
+| Independent standard samples at 5 MHz | 39 × 512 bytes: start, end, and both sides of all 37 CFLASH block boundaries; every byte matches the full queued dump |
+| Updated app, API read mode omitted | Config defaults to queued: 2.993 s at 1 MHz and 1.033 s at 5 MHz; both match the saved standard dump; no fallback |
+
+These are measurements from one board/host, not a guaranteed rate for every
+target. The full array was read twice with queued mode; independent standard
+comparison covers Config and the listed samples, not a full standard array read.
+No flash, OTP, password or lifecycle programming was performed. Raw dumps and
+the detailed bench report remain local and are excluded from this repository.
+
 ## Queued CFLASH reads — 2026-10-21
 
-Version 0.6.0 adds an experimental queued mode, disabled by default, for MPC5748G
+Version 0.6.0 introduced an experimental queued mode, disabled by default, for MPC5748G
 CFLASH Read operations only. It retains the single-word Nexus protocol from
 [NXP AN4365, sections 3.1/3.4](https://www.nxp.com/docs/en/application-note/AN4365.pdf).
 The existing synchronous path remains in use for register setup, authentication,
@@ -122,10 +143,9 @@ propagation without starting a hardware operation.
 With a 10 µs delay, the emitted scan sequence budgets about 426.5 seconds at
 1 MHz or 97.7 seconds at 5 MHz for 6,225,920 CFLASH bytes. These are **clock-only
 lower bounds**, excluding USB, host execution, setup, retries and storage; they
-are not measured read times. A three-minute full read has not been verified.
-Tigard was disconnected during this change, so no live queued reads or writes
-were performed. Compare a Config dump against a standard read before trying a
-larger range. The UI records actual duration, byte rate, and polling fallback.
+are not measured read times. Tigard was disconnected during the initial 0.6.0
+change; the later 0.6.1 measurements above supersede that missing bench evidence.
+The UI records actual duration, byte rate, and polling fallback.
 
 ## Offline verification
 

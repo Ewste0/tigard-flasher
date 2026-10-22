@@ -1,6 +1,7 @@
 """Clocked Nexus read model: ready latency, stale RWD, bus/USB errors, no USB."""
 import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import Mock, patch
 
 from spc5tool.chips import SPC5748G, SPC58NH92
@@ -186,14 +187,53 @@ class FastReadTests(unittest.TestCase):
             batch.scan(20000)
         self.assertEqual(io.reads, 0)
 
-    def test_standard_default_and_cli_flag(self):
+    def test_cli_auto_default_and_explicit_flags(self):
         args = build_parser().parse_args(['read', 'mpc5748g', '--address', '0xFA8000',
                                          '--length', '256', 'config.bin'])
-        self.assertFalse(args.fast_read)
+        self.assertIsNone(args.fast_read)
         args = build_parser().parse_args(['read', 'mpc5748g', '--address', '0xFA8000',
                                          '--length', '256', '--fast-read', '--read-delay-us', '20', 'config.bin'])
         self.assertTrue(args.fast_read)
         self.assertEqual(args.read_delay_us, 20)
+        args = build_parser().parse_args(['read', 'mpc5748g', '--address', '0xFA8000',
+                                         '--length', '256', '--standard-read', 'config.bin'])
+        self.assertFalse(args.fast_read)
+
+    def test_cli_resolves_read_mode_before_opening_hardware(self):
+        cases = [(['read', 'mpc5748g'], '0xFA8000', [], True),
+                 (['read', 'mpc5748g'], '0xFA8000', ['--standard-read'], False),
+                 (['read', 'mpc5748g'], '0xFA8000', ['--freq', '1000'], False),
+                 (['read', 'mpc5748g'], '0x400100', [], False),
+                 (['read', 'spc58nh92'], '0x1000000', [], False),
+                 (['read', 'spc560b64'], '0', [], False),
+                 (['spi', 'read', 'w25q128jv'], '0', [], False),
+                 (['blank', 'mpc5748g'], '0xFA8000', [], False)]
+        for command, address, options, expected in cases:
+            with self.subTest(command=command, address=address, options=options), tempfile.TemporaryDirectory() as directory:
+                output = [str(Path(directory) / 'dump.bin')] if 'read' in command else []
+                args = build_parser().parse_args(command + ['--address', address, '--length', '256'] + options + output)
+                with patch('spc5tool.cli.backend', side_effect=RuntimeError('backend reached')) as backend:
+                    with self.assertRaisesRegex(RuntimeError, 'backend reached'):
+                        args.func(args)
+                backend.assert_called_once_with(args)
+                self.assertEqual(getattr(args, 'fast_read', False), expected)
+
+    def test_api_auto_default_only_for_eligible_reads(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Workspace(directory)
+            request = dict(target='spc5748g', action='read', mode='hardware', address=0xFA8000, length=256)
+            self.assertTrue(workspace.plan(request)['fast_read'])
+            image = workspace.add_file('test.bin', bytes(256), 'image')
+            cases = [{'fast_read': False}, {'frequency': 1000}, {'address': 0x400100},
+                     {'target': 'spc58nh92', 'address': 0x1000000}, {'target': 'spc560b64', 'address': 0},
+                     {'target': 'w25q128jv', 'address': 0}, {'action': 'identify'}, {'action': 'blank'},
+                     {'action': 'verify', 'file_id': image['id']},
+                     {'action': 'write', 'file_id': image['id'], 'expected_id': 0x0988101D},
+                     {'action': 'erase', 'length': 0x4000, 'expected_id': 0x0988101D},
+                     {'action': 'program', 'file_id': image['id'], 'expected_id': 0x0988101D}]
+            for update in cases:
+                with self.subTest(update=update):
+                    self.assertFalse(workspace.plan({**request, **update})['fast_read'])
 
     def test_api_limits_queue_to_cflash_read(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -204,7 +244,7 @@ class FastReadTests(unittest.TestCase):
             self.assertTrue(plan['fast_read'])
             self.assertEqual(plan['read_delay_us'], 10)
             self.assertFalse(workspace.plan({**request, 'fast_read': False})['fast_read'])
-            for update in ({'action': 'verify'}, {'target': 'spc58nh92'}, {'fast_read': 'true'},
+            for update in ({'action': 'verify'}, {'target': 'spc58nh92'}, {'fast_read': 'true'}, {'fast_read': None},
                            {'address': 0x400100}, {'read_delay_us': 0}, {'read_delay_us': 1001},
                            {'frequency': 1000}):
                 with self.subTest(update=update), self.assertRaises(ValueError):

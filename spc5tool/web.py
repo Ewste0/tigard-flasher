@@ -250,6 +250,9 @@ class Workspace:
                     unit = chips.CHIPS[target].program_unit
                     if address % unit or size % unit:
                         raise ValueError(f"Program requires complete aligned {unit}-byte ECC units")
+        if "fast_read" not in request:
+            fast_read = (target == "spc5748g" and action == "read" and frequency >= 100000
+                         and bool(blocks) and all(b.region == "CFLASH" for b in blocks))
         backups = (backup_blocks(chips.CHIPS[target], address, size)
                    if target in chips.CHIPS and action in ("program", "install_password") else blocks)
         filename = safe_filename(request.get("filename") or f"{target}-{address:08x}-{mode}.bin")
@@ -263,7 +266,7 @@ class Workspace:
         plan["password_slot"] = slot if action == "install_password" else None
         plan["notes"] = []
         if fast_read:
-            plan["notes"].append(f"Experimental queued CFLASH read; {read_delay_us} microsecond settling delay. Captured status is checked for every word. Hardware speed validation pending.")
+            plan["notes"].append(f"Queued CFLASH read; {read_delay_us} microsecond settling delay. Every word's status is checked; a target that is not ready falls back to standard reads.")
         if any(b.kind == "otp" for b in blocks) and action in MUTATING:
             plan["notes"].append("One-time programming: only erased ECC units may be written. No erase or rollback is possible.")
             plan["notes"].append("Backup covers only the affected OTP units; unrelated factory ECC tests and password slots are not read.")

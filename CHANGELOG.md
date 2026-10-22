@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.6.1 — 2026-10-22
+
+- Make queued reading the default for MPC5748G CFLASH Read in the UI, API and
+  CLI at 100 kHz or faster. Keep the 10 µs delay, per-word status checks and
+  automatic polling fallback. Other regions and operations retain standard access.
+- Add `--standard-read` for the CLI; preserve the UI Standard setting and API
+  `fast_read: false` override. Remove the experimental label from queued mode.
+- Verify queued data on the connected MPC5748G against standard Config reads,
+  standard samples across every CFLASH block boundary and a repeated full dump.
+  Full reads take about four minutes at 5 MHz on this board.
+- Add default/override coverage for the UI, API and CLI, including other chips,
+  UTEST, low clocks and non-read operations.
+
 ## 0.6.0 — 2026-10-21
 
 - Add opt-in queued MPC5748G CFLASH reads in the UI, API and CLI, with an adjustable

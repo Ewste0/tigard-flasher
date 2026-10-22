@@ -26,7 +26,7 @@ for (const element of document.querySelectorAll("[data-icon]")) {
 let targets = [], target, region, file = null, busy = false, ready = false;
 const mode = "hardware";
 let frequency = 500000, expectedId = "", pendingPlan = null, resetPin = "srst";
-let fastRead = false, readDelayUs = 10;
+let fastRead = true, readDelayUs = 10;
 let seenLogs = 0, eventCount = 0, toastTimer, previewSequence = 0;
 let activeJob = null, suggestedName = "";
 let viewBytes = null, viewFileId = null, scrollFrame = null;
@@ -362,7 +362,7 @@ async function upload(input) {
 }
 function request(action) {
   return {target:target.key, action, mode, frequency, expected_id:expectedId || null,
-    fast_read:fastRead && action === "read" && target.key === "spc5748g" && document.querySelector('input[name="region"]:checked')?.value === "CFLASH",
+    fast_read:fastRead && frequency >= 100000 && action === "read" && target.key === "spc5748g" && document.querySelector('input[name="region"]:checked')?.value === "CFLASH",
     read_delay_us:readDelayUs,
     filename:$("saveName").value, password:target.password_login && action !== "identify" ? $("currentPassword").value : "",
     ...(action === "install_password" ? {new_password:$("newPassword").value, confirm_password:$("confirmPassword").value, password_slot:$("passwordSlot").value} : {}),
