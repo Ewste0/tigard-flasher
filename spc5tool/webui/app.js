@@ -387,6 +387,10 @@ async function upload(input) {
   } catch (error) { message(error); } finally { setBusy(false); $("fileInput").value = ""; }
 }
 function request(action) {
+  // Reading after opening S19 creates a new binary dump, not S-record text.
+  if (action === "read" && file?.format === "srec" && $("saveName").value === file.name) {
+    $("saveName").value = file.name.replace(/\.[^.]+$/, ".bin");
+  }
   return {target:target.key, action, mode, frequency, expected_id:expectedId || null,
     ...(adapterState ? {adapter_revision:adapterState.revision} : {}),
     fast_read:fastRead && frequency >= 100000 && ["read", "write", "program", "erase", "verify", "blank"].includes(action) && target.key === "spc5748g" && document.querySelector('input[name="region"]:checked')?.value === "CFLASH",

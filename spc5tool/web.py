@@ -199,6 +199,8 @@ class Workspace:
             info, _ = self.file(key)
             if info.get("format") == "srec" and Path(name).suffix.lower() not in SREC_SUFFIXES:
                 raise ValueError("S-record downloads preserve the original text; use a .s19 or .srec filename")
+            if info.get("format") != "srec" and Path(name).suffix.lower() in SREC_SUFFIXES:
+                raise ValueError("binary downloads cannot be renamed as S-record text; use .bin")
             self.files[key]["name"] = name
             for job in self.jobs.values():
                 for item in (job["result"].get("file"), job["result"].get("backup")):
@@ -317,6 +319,8 @@ class Workspace:
         backups = (backup_blocks(chips.CHIPS[target], address, size)
                    if target in chips.CHIPS and action in ("program", "install_password") else blocks)
         filename = safe_filename(request.get("filename") or f"{target}-{address:08x}-{mode}.bin")
+        if action == "read" and Path(filename).suffix.lower() in SREC_SUFFIXES:
+            raise ValueError("Read saves raw binary; use a .bin filename")
         plan = {"id": uuid.uuid4().hex, "target": target, "action": action, "mode": mode,
                 "address": address, "length": size, "frequency": frequency, "expected_id": expected,
                 "fast_read": fast_read, "read_delay_us": read_delay_us,

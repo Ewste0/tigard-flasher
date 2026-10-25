@@ -10,7 +10,7 @@ from pathlib import Path
 from . import chips
 from .errors import DriverError
 from .files import save_backup, write_new, sha256
-from .images import decode_image, MAX_UPLOAD
+from .images import decode_image, MAX_UPLOAD, SREC_SUFFIXES
 from .flash import Flash
 from .geometry import Block, backup_blocks, blocks_for, select_blocks
 from .idcode import read_idcode
@@ -126,6 +126,8 @@ def _operation(args):
         args.address, data = image.select(getattr(args, "segment", None), args.address)
     if args.address is None:
         raise ValueError("this operation requires --address")
+    if args.action == "read" and Path(args.file).suffix.lower() in SREC_SUFFIXES:
+        raise ValueError("Read saves raw binary; use a .bin filename")
     size = len(data) if data is not None else args.length
     blocks = _blocks(args, args.address, size, whole=args.action == "erase")
     if getattr(args, "fast_read", False) is None:

@@ -166,6 +166,9 @@ class WebTests(unittest.TestCase):
         self.assertEqual(result['status'], 'complete', result)
         self.assertEqual(self.call('/api/rename', {'file_id': image['id'], 'name': 'bad.bin'})[0], 400)
         self.assertEqual(self.call('/api/buffer/' + image['id'] + '?segment=2')[0], 400)
+        self.assertEqual(self.call('/api/plan', self.payload(filename='read.S19'))[0], 400)
+        _, binary = self.call('/api/files?name=raw.bin', b'\xff' * 8, raw=True)
+        self.assertEqual(self.call('/api/rename', {'file_id': binary['id'], 'name': 'wrong.srec'})[0], 400)
 
     def test_srecord_otp_uses_program_and_rejects_bad_data_before_planning(self):
         raw = record('2', 0x400000, b'12345678')
