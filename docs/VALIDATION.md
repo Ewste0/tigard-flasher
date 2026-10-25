@@ -1,5 +1,74 @@
 # Validation and scope
 
+## SPC560 connection comparison and failure capture — 2026-10-25
+
+The user retested v0.7.4: the register-only instruction `0x1BE1D001` also failed
+with OSR `0x309` and next PC `0xFFFFC004`. P&E Micro reportedly reads the same
+chip successfully. Thus moving the fetch to ROM did not resolve the observed
+failure, and the OSR alone cannot establish a hardware, authentication or
+instruction-fetch cause.
+
+Static comparison of the supplied `progppcnexus.exe` (SHA-256
+`ac12ff11801465d7277876b19bdf40f3e288e9c78628bc0fd15f4d727090102e`)
+recovered these protocol facts, without running it or connecting an adapter:
+
+- The single-core initialization helper at VA `0x0057D544`, called before
+  reset release by the connection routine at `0x00580224`, writes OCR with
+  DR/WKUP/FDB and writes DBCR0 twice to establish EDM and initialize its fields.
+- The instruction helper at VA `0x005774AC` independently adds CTL bit `0x2`
+  for VLE and `0x400` for operand override. It submits CPUSCR with GO set and
+  EX clear (`0x110`), then scans status before retrieving the result.
+- The status checker at VA `0x00575E80` requires `(OSR & 0x30F) == 0x209` for
+  a completed step. P&E does not treat `0x309` as successful execution.
+- The MPC560x/SPC560xxx profile uses a BAM instruction PC of `0xFFFFC000`.
+  Its MSR template is `0x02003000`, while our injected MSR remains zero.
+  This release does not copy the broad template's unsupported SPE/FP bits or
+  change machine-check exception handling without target evidence.
+
+The SPC560 connection now arms DR/WKUP/FDB and initializes DBCR0 twice under
+RESET. It retains post-halt reinitialization, then clears DBSR and changes OCR
+to WKUP/FDB before executing instructions. Unused z0h OCR memory-attribute bits
+from the generic P&E helper are omitted. SPC560 instruction submission now
+uses one full CPUSCR+GO scan; the scan's UPDATE-DR starts exactly one step.
+There is no second GO or automatic replay. Other families retain their previous
+reset and GO sequence. This is an independent implementation of the observed
+protocol, not a claim of complete P&E behavior or adapter timing equivalence.
+
+The outgoing CTL value was still `0x400`: code coupled IRStat8/VLE to `has_mmu`.
+VLE instruction format and address translation are separate properties. Although
+the generic NXP AN4365 describes IRStat8 as reserved for z0,
+[ST AN4035 sections 2.7.2 and 2.8](https://www.st.com/resource/en/application_note/dm00046345-flash-programming-through-nexus-jtag-stmicroelectronics.pdf)
+specify setting the instruction-format flag appropriately for SPC56 VLE
+injection. [ST RM0046, IRStat8 description](https://www.st.com/resource/en/reference_manual/rm0046-spc560p34spc560p40-32bit-mcu-family-built-on-the-embedded-power-architecture-stmicroelectronics.pdf)
+also describes the tag as always set on z0h and used to determine IR format.
+Version 0.7.5 explicitly sends VLE=1 for these VLE opcodes, yielding CTL `0x402`
+with operand override and `0x002` without it. MMU-equipped injection retains
+the same encoding as before; Nexus memory transactions do not use this path.
+
+To make another failure actionable, a valid ERR status with DEBUG and MCLK set
+and RESET clear triggers read-only CPUSCR/OCR/DBCR0/DBSR capture. The error
+includes the submitted CTL and captured PC, IR, MSR and CTL. It excludes both
+WBBR halves and the supplied operand, which can contain user data or credentials.
+No instruction is replayed, no exception is cleared, and no memory operation is
+performed by capture. Transport failures, timeouts, invalid scans and inactive
+cores do not trigger diagnostic scans; a capture failure stops further I/O.
+
+Regression tests check the instruction-format tag for every SPC560 profile,
+reject an untagged VLE packet in the protocol model, and exercise diagnostic
+failures, no-replay behavior and credential exclusion. The model encodes the
+documented format requirement; it does not prove that the missing tag caused
+this particular target's ERR. No physical SPC560 was accessed during development.
+
+SEGGER comparison: the installed J-Link V8.64 device database includes SPC560B64.
+However, the support icons on the
+[official SPC560B64 product page](https://www.segger.com/supported-devices/st/spc56/spc560b64/)
+mark J-Link and Flasher ARM unsupported, while Flasher ATE2, Compact, Portable
+PLUS, Pro and Pro XL are supported. A database entry alone does not establish
+ordinary J-Link support. [SEGGER's SPC56 notes](https://kb.segger.com/ST_SPC56)
+also distinguish shadow-sector programming and watchdog handling. No SEGGER
+hardware transaction trace was captured; this comparison is not a verified
+connection recipe for the user's SPC560B64L3.
+
 ## SPC560 first instruction follow-up — 2026-10-25
 
 On v0.7.3 the user's Windows SPC560B64L3 reached the first injected instruction,

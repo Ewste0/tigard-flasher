@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.7.5 — 2026-10-25
+
+- Align SPC560 debug entry with the inspected P&E connection order: arm
+  DR/WKUP/FDB and initialize DBCR0 twice while RESET is asserted. Reinitialize
+  after the confirmed halt, then clear the debug request before stepping.
+- Submit SPC560 CPUSCR and GO together in one 192-bit update, with EX clear;
+  issue exactly one instruction and never replay after a USB failure.
+- Tag injected instructions as VLE on SPC560 as well as MMU-equipped cores.
+  The previous MMU-dependent condition sent CTL=0x400 instead of 0x402 on
+  SPC560, despite submitting a VLE opcode. Follow ST AN4035's instruction-format
+  handling independently of memory translation.
+- When a new step reports ERR while halted and clocked, capture PC/IR/MSR/CTL
+  and OCR/DBCR0/DBSR using read-only debug scans. Exclude WBBR operands, never
+  replay the instruction, and stop diagnostic I/O on a transport failure.
+- Add wire-format, stale-result and diagnostic failure/privacy regressions.
+  Record the limits of the P&E and SEGGER static comparisons.
+  The user reports P&E Micro can access the same target; our Windows SPC560
+  target still needs a retest. This release does not claim hardware success.
+
 ## 0.7.4 — 2026-10-25
 
 - Remove the SPC560 first-step dependency on uninitialized SRAM. Inject VLE

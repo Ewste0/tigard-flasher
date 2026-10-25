@@ -19,6 +19,7 @@ class OnceTarget(FakeTarget):
         self.fetches = []
         self.reset_asserted = False
         self.halted = False
+        self.instruction_error = False
         super().__init__(0x1234501D, 5)
 
     def _enter(self, nxt):
@@ -29,7 +30,8 @@ class OnceTarget(FakeTarget):
             self.ir_width = 10 if self.aux else 5
             self.handoff = False
         elif nxt == 'IRCAPTURE':
-            self.ir_shift = (0x209 if self.halted else 0x201) if self.aux else 1
+            status = (0x209 if self.halted else 0x201) | (0x100 if self.instruction_error else 0)
+            self.ir_shift = status if self.aux else 1
         elif nxt == 'IRUPDATE':
             if not self.aux:
                 if self.ir_shift == 0x11:
@@ -81,6 +83,12 @@ class OnceTarget(FakeTarget):
             raise AssertionError('CPU instruction executed outside debug')
         if not ctl & 0x400:
             raise AssertionError('operand injection not enabled')
+        if not ctl & 2:
+            # Model the IR format tag independently of MMU support. Supplying
+            # our VLE opcodes as Book E cannot execute the requested operation.
+            self.instruction_error = True
+            return
+        self.instruction_error = False
         # Instruction prefetch may precede the injected store completing.
         # Resolve it BEFORE effects, so a bootstrap cannot initialize the very
         # SRAM it is already fetching from. BAM is independent immutable ROM.

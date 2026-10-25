@@ -9,7 +9,7 @@ from unittest.mock import Mock, patch
 
 from spc5tool.chips import SPC560B64, SPC5748G
 from spc5tool.cli import main
-from spc5tool.errors import DriverError, OperationTimeout, VerificationError
+from spc5tool.errors import DriverError, OnCEInstructionError, OperationTimeout, VerificationError
 from spc5tool.files import load_state, save_backup, save_state, sha256
 from spc5tool.flash import Flash
 from spc5tool.geometry import blocks_for, select_blocks
@@ -150,7 +150,7 @@ class OnceTests(unittest.TestCase):
         from tests.model_once import OnceTarget
         target = OnceTarget()
         target.halted = True
-        target.scan = [0x40000000, 0, 0, 0x3FFFFFFC, 0x181F0900, 0x400]
+        target.scan = [0x40000000, 0, 0, 0x3FFFFFFC, 0x181F0900, 0x402]
         with self.assertRaisesRegex(AssertionError, 'fetch from uninitialized'):
             target.execute()
         self.assertEqual(target.memory, {})
@@ -175,13 +175,92 @@ class OnceTests(unittest.TestCase):
         once, tap = self.make_once()
         once.step(0x501F0000, 0x12345678, force_operand=True)
         calls = tap.method_calls
-        payload = 0x12345678 | (0xFFFFC000 << 96) | (0x501F0000 << 128) | (0x400 << 160)
-        self.assertEqual(calls[0].args, (10, 0x10))
+        payload = 0x12345678 | (0xFFFFC000 << 96) | (0x501F0000 << 128) | (0x402 << 160)
+        self.assertEqual(calls[0].args, (10, 0x110))
         self.assertEqual(calls[1].args, (192, payload))
-        self.assertEqual(calls[2].args, (10, 0x111))
-        self.assertEqual(calls[3].args, (1, 0))
-        self.assertEqual(calls[4].args, (10, 0x211))
-        self.assertEqual(calls[5].args, (10, 0x210))
+        self.assertEqual(calls[1].kwargs, {'read': False})
+        self.assertEqual(calls[2].args, (10, 0x211))
+        self.assertEqual(calls[3].args, (10, 0x210))
+        self.assertEqual(len(calls), 5)
+
+    def test_mmu_step_retains_existing_go_sequence(self):
+        once, tap = self.make_once(SPC5748G)
+        once.step(0x1BE1D001, pc=0xFFFFC004)
+        self.assertEqual([c.args for c in tap.scan_ir.call_args_list],
+                         [(10, 0x10), (10, 0x111), (10, 0x211), (10, 0x210)])
+
+    def test_spc560_scan_failure_never_replays_go_or_polls(self):
+        once, tap = self.make_once()
+        tap.scan_dr.side_effect = MpsseError('USB response lost')
+        with self.assertRaisesRegex(MpsseError, 'USB response lost'):
+            once.step(0x1BE1D001, force_operand=True)
+        self.assertEqual([c.args for c in tap.scan_ir.call_args_list], [(10, 0x110)])
+        self.assertEqual(tap.scan_dr.call_count, 1)
+
+    def test_vle_instruction_tag_is_independent_of_mmu_and_operand_override(self):
+        from spc5tool.chips import SPC560B54, SPC560B60
+        for chip in (SPC560B54, SPC560B60, SPC560B64, SPC5748G):
+            for force, expected in ((False, 2), (True, 0x402)):
+                once, tap = self.make_once(chip)
+                once.step(0x1BE1D001, 0x12345678, force_operand=force, pc=0xFFFFC004)
+                payload = tap.scan_dr.call_args_list[0].args[1]
+                self.assertEqual(CpuScan.unpack(payload).control, expected)
+
+    def test_untagged_vle_fails_without_returning_staged_operand(self):
+        from tests.model_once import OnceTarget
+        backend = FakeMpsse(0)
+        backend.tgt = OnceTarget()
+        once = OnCE(JtagTap(MpsseTransport(backend)), SPC560B64)
+        once.attach()
+        # Send the old packet directly; the model rejects this encoding rather
+        # than assuming every injected opcode is VLE because the core lacks MMU.
+        old = CpuScan(0x5AA5C33C, 0, 0, 0xFFFFC000, 0x1BE1D001, 0x400)
+        once.write_register(0x10, old.pack(), 192)
+        once.tap.scan_ir(10, 0x111)
+        once.tap.scan_dr(1, 0, read=False)
+        with self.assertRaisesRegex(OnCEInstructionError, 'OSR=0x309'):
+            once.wait_debug()
+        self.assertEqual(backend.tgt.gprs[1], 0)
+        self.assertEqual(backend.tgt.memory, {})
+
+    def test_instruction_failure_captures_only_debug_registers_without_secrets(self):
+        once, tap = self.make_once()
+        once.status = Mock(return_value=0x309)
+        snapshot = CpuScan(0xBADC0FFE, 0xFACEB00C, 0x1234, 0x20, 0x1800D000, 0x802)
+        once.read_register = Mock(side_effect=[snapshot.pack(), 6, 0x80000000, 0x01000000])
+        with self.assertRaises(DriverError) as error:
+            once.step(0x1BE1D001, 0xDEADBEEF, force_operand=True)
+        message = str(error.exception)
+        for expected in ('sent CTL=0x00000402', 'captured PC=0x00000020', 'IR=0x1800D000',
+                         'MSR=0x00001234', 'CTL=0x00000802', 'OCR=0x00000006',
+                         'DBCR0=0x80000000', 'DBSR=0x01000000'):
+            self.assertIn(expected, message)
+        for secret in ('BADC0FFE', 'FACEB00C', 'DEADBEEF', 'WBBR'):
+            self.assertNotIn(secret, message)
+        self.assertEqual([c.args for c in once.read_register.call_args_list],
+                         [(0x10, 192), (0x12,), (0x31,), (0x30,)])
+        self.assertEqual([c.args for c in tap.scan_ir.call_args_list], [(10, 0x110)])
+        self.assertEqual(len(tap.scan_dr.call_args_list), 1)  # one CPUSCR+GO; no replay
+
+    def test_failure_capture_stops_on_usb_error_and_preserves_original_error(self):
+        once, _ = self.make_once()
+        once.status = Mock(return_value=0x309)
+        once.read_register = Mock(side_effect=[0, MpsseError('USB disconnected')])
+        with self.assertRaisesRegex(DriverError, 'OSR=0x309.*capture unavailable'):
+            once.step(0x1BE1D001, force_operand=True)
+        self.assertEqual(once.read_register.call_count, 2)
+
+    def test_no_diagnostic_io_after_transport_timeout_reset_or_invalid_status(self):
+        failures = (MpsseError('USB'), OperationTimeout('timeout'),
+                    DriverError('invalid scan'), OnCEInstructionError(0x349),
+                    OnCEInstructionError(0x109), OnCEInstructionError(0x301))
+        for failure in failures:
+            once, _ = self.make_once()
+            once.wait_debug = Mock(side_effect=failure)
+            once.read_register = Mock()
+            with self.assertRaises(DriverError):
+                once.step(0x1BE1D001, force_operand=True)
+            once.read_register.assert_not_called()
 
     def test_instruction_fetch_requires_a_valid_address_before_scanning(self):
         once, tap = self.make_once(SPC5748G)
@@ -192,13 +271,23 @@ class OnceTests(unittest.TestCase):
                 once.step(0x1BE1D001, pc=pc)
         self.assertEqual(tap.method_calls, [])
 
-    def test_z0h_initializes_dbcr0_after_setting_edm(self):
-        once, _ = self.make_once()
-        with patch.object(once, 'write_register', wraps=once.write_register) as writes:
+    def test_z0h_arms_debug_under_reset_and_reinitializes_after_halt(self):
+        once, tap = self.make_once()
+        events = []
+        tap.io.set_reset.side_effect = lambda **pins: events.append(('reset', pins['srst']))
+        original = once.write_register
+        def record(register, value, bits=32):
+            events.append(('write', register, value))
+            return original(register, value, bits)
+        with patch.object(once, 'write_register', side_effect=record) as writes:
             once.attach()
         self.assertEqual([c.args for c in writes.call_args_list],
-                         [(0x12, 5), (0x31, 0x80000000), (0x31, 0x80000000),
+                         [(0x12, 7), (0x31, 0x80000000), (0x31, 0x80000000),
+                          (0x31, 0x80000000), (0x31, 0x80000000),
                           (0x30, 0xFFFFFFFF), (0x12, 6)])
+        self.assertEqual(events[:5], [('reset', True), ('write', 0x12, 7),
+                         ('write', 0x31, 0x80000000), ('write', 0x31, 0x80000000),
+                         ('reset', False)])
 
     def test_chain_word_order(self):
         values = (0x11223344, 0x55667788, 0xAABBCCDD, 0x40000000, 0x501F0000, 0x402)
@@ -215,7 +304,7 @@ class OnceTests(unittest.TestCase):
             self.assertEqual(tap.io.set_reset.call_args_list[0].kwargs, {'srst': True})
             self.assertEqual(tap.io.set_reset.call_args_list[1].kwargs, {'srst': False})
             data_writes = [c.args[1] for c in tap.scan_dr.call_args_list if len(c.args) == 2]
-            self.assertIn(5, data_writes)
+            self.assertIn(7 if chip == SPC560B64 else 5, data_writes)
             self.assertIn(6, data_writes)
             self.assertNotIn(0xA0000000, data_writes)
 
@@ -274,11 +363,13 @@ class OnceTests(unittest.TestCase):
         once.attach()
         self.assertTrue(once.core_states['core0']['prior_step_error'])
         self.assertEqual(once.core_states['core0']['state'], 'halted')
-        # A new instruction MUST still fail on ERR; no data read/retry follows.
-        with patch.object(once, 'read_register') as read:
+        # A new instruction MUST still fail on ERR; only debug-state capture
+        # follows, with no memory operation or instruction retry.
+        with patch.object(once, 'read_register', return_value=0) as read:
             with self.assertRaisesRegex(DriverError, 'single-step 0x501F0000.*OSR=0x309'):
                 once.step(0x501F0000, 0x800000, force_operand=True)
-            read.assert_not_called()
+            self.assertEqual([c.args for c in read.call_args_list],
+                             [(0x10, 192), (0x12,), (0x31,), (0x30,)])
         once.status.return_value = 0x209
         self.assertEqual(once.step(0x501F0000, 0x800000, force_operand=True), 0)
 

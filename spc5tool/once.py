@@ -7,11 +7,12 @@ import time
 import math
 from dataclasses import dataclass
 
-from .errors import DriverError, OperationTimeout
+from .errors import DriverError, OnCEInstructionError, OperationTimeout
 from .security import validate_login
 
 READ, GO = 0x200, 0x100
 CPUSCR, NOREG, OCR, DBSR, DBCR0, NEXUS = 0x10, 0x11, 0x12, 0x30, 0x31, 0x7C
+CTL_VLE, CTL_FFRA = 0x2, 0x400
 
 
 @dataclass
@@ -70,9 +71,7 @@ class OnCE:
             if status & 0x080:
                 raise DriverError(f"OnCE checkstop, OSR=0x{status:03x}; core cannot execute debug instructions")
             if status & 0x100 and not entering_debug:
-                raise DriverError(f"OnCE instruction execution error, OSR=0x{status:03x} "
-                                  f"(DEBUG={int(bool(status & 8))}, RESET={int(bool(status & 0x40))}, "
-                                  f"MCLK={int(bool(status & 0x200))}); the last single-step did not complete reliably")
+                raise OnCEInstructionError(status)
             if (status & 0x008 and not status & 0x040 and
                     (not entering_debug or status & 0x200)):  # DEBUG, reset released, z0h clock running
                 return status
@@ -93,6 +92,7 @@ class OnCE:
         if password is not None:
             validate_login(self.chip, password)
         c55_login = password is not None and self.chip.password_protocol == "jtag256"
+        spc560_connect = self.chip.algorithm == "c90-b"
         cores = self.chip.core_selectors or ((0x11,) if self.chip.key == "spc560b64" else (0x28, 0x29, 0x2A))
         self.tap.reset()
         self.selected = False
@@ -109,7 +109,15 @@ class OnCE:
             if not c55_login:
                 for opcode in cores:
                     self.select(opcode)
-                    self.write_register(OCR, 0x5)  # DR | WKUP while reset asserted
+                    if spc560_connect:
+                        # Arm DR/WKUP/FDB and establish EDM before releasing
+                        # RESET, matching P&E's single-core connection order.
+                        # Its extra OCR memory attributes are unused on z0h.
+                        self.write_register(OCR, 0x7)
+                        self.write_register(DBCR0, 0x80000000)
+                        self.write_register(DBCR0, 0x80000000)
+                    else:
+                        self.write_register(OCR, 0x5)  # DR | WKUP while reset asserted
         finally:
             self.tap.io.set_reset(srst=False)
         if c55_login:
@@ -163,16 +171,43 @@ class OnCE:
             pc = base + 4
         if not isinstance(pc, int) or not 4 <= pc <= 0xFFFFFFFC or pc & 3:
             raise ValueError("next PC must be an aligned 32-bit address at least 4")
-        ctl = (0x400 if force_operand else 0) | (2 if self.chip.has_mmu else 0)
+        # The instructions injected by this API are VLE regardless of MMU.
+        # ST AN4035 2.7.2/2.8 and RM0046 IRStat8: retain the VLE tag even
+        # on VLE-only z0h. has_mmu describes memory translation, not IR format.
+        ctl = (CTL_FFRA if force_operand else 0) | CTL_VLE
         state = CpuScan(operand, 0, 0, pc - 4, instruction, ctl)
-        self.write_register(CPUSCR, state.pack(), 192)
-        self.tap.scan_ir(10, GO | NOREG)
-        # GO takes effect on UPDATE-DR, not UPDATE-IR.
-        self.tap.scan_dr(1, 0, read=False)
+        if self.chip.algorithm == "c90-b":
+            # SPC560: submit CPUSCR and GO together, as observed in the P&E
+            # instruction helper. UPDATE-DR commits the full 192-bit state and
+            # starts exactly one instruction; EX remains clear. Do not issue
+            # a second GO after this scan, including on a transport failure.
+            self.write_register(GO | CPUSCR, state.pack(), 192)
+        else:
+            self.write_register(CPUSCR, state.pack(), 192)
+            self.tap.scan_ir(10, GO | NOREG)
+            # GO takes effect on UPDATE-DR, not UPDATE-IR.
+            self.tap.scan_dr(1, 0, read=False)
         try:
             self.wait_debug()
         except DriverError as exc:
-            raise DriverError(f"single-step 0x{instruction:08X}, next PC 0x{pc:08X}: {exc}") from exc
+            detail = ""
+            if isinstance(exc, OnCEInstructionError) and exc.status & 0x248 == 0x208:
+                # Read-only debug registers, only after a valid halted/clocked
+                # error status. No GO, memory access, replay, or exception clear.
+                # Do not attempt more I/O following transport failures/timeouts.
+                try:
+                    captured = CpuScan.unpack(self.read_register(CPUSCR, 192))
+                    ocr = self.read_register(OCR)
+                    dbcr0 = self.read_register(DBCR0)
+                    dbsr = self.read_register(DBSR)
+                    # WBBR may contain a password or user data: never log it.
+                    detail = (f"; captured PC=0x{captured.pc:08X}, IR=0x{captured.instruction:08X}, "
+                              f"MSR=0x{captured.msr:08X}, CTL=0x{captured.control:08X}, "
+                              f"OCR=0x{ocr:08X}, DBCR0=0x{dbcr0:08X}, DBSR=0x{dbsr:08X}")
+                except DriverError:
+                    detail = "; debug register capture unavailable (no further I/O attempted)"
+            raise DriverError(f"single-step 0x{instruction:08X}, next PC 0x{pc:08X}, "
+                              f"sent CTL=0x{ctl:08X}: {exc}{detail}") from exc
         return CpuScan.unpack(self.read_register(CPUSCR, 192)).wbbr
 
     def nexus_read(self, register):
