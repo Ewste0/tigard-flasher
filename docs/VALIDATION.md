@@ -1,5 +1,32 @@
 # Validation and scope
 
+## SPC560 debug entry and S-record input — 2026-10-25
+
+The reported `core 0 (TAP 0x11), OSR=0x309` has MCLK, ERR and DEBUG set,
+with RESET and CHKSTOP clear. It is a valid OnCE status, not an all-ones scan.
+[ST RM0046, e200z0h Table 467 and section 36.14](https://www.st.com/resource/en/reference_manual/rm0046-spc560p34spc560p40-32bit-mcu-family-built-on-the-embedded-power-architecture-stmicroelectronics.pdf)
+defines ERR as the result of the last single-stepped instruction. The documented
+entry sequence checks debug mode before initializing debug registers; new steps
+must then re-enter DEBUG without ERR. This core protocol also agrees with
+[NXP AN4365 sections 2.3–2.7](https://www.nxp.com/docs/en/application-note/AN4365.pdf).
+
+The driver now permits that initial ERR state on the z0h attach path only. It
+does not clear a nonexistent writable OSR flag, retry failed memory instructions,
+or treat a failed step as data. Every subsequent instruction still requires
+ERR clear; errors include its opcode and next PC. Invalid scans, reset and
+checkstop remain rejected or time out. The screenshot establishes the initial
+status; its underlying cause and successful reading after this change have not
+been verified on the user's Windows target.
+
+Synthetic tests cover this entry/step distinction and S-record checksums,
+counts, mixed S1/S2/S3 records, missing optional headers/terminators, overlaps,
+overflow, sparse segment selection, original downloads, address guards and OTP
+operations. Four private SPC560 dump files were decoded and independently
+compared locally: CFLASH 0x00000000 / 0x180000 bytes; DFLASH 0x00800000 /
+0x10000; CFLASH_OTP 0x00400000 / 0x2000; DFLASH_OTP 0x00C00000 / 0x2000.
+No USB access or target writes were performed for these input checks; none of
+the private dump contents is included in the repository.
+
 ## Hardware bench record — 2026-10-19
 
 Host: macOS, Python 3.13, Tigard v1.1. Target: one MPC5748G board,

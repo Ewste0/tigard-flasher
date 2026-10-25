@@ -78,6 +78,7 @@ class TargetSession:
             once = OnCE(tap, self.chip)
             self.memory = self._attach(once)
             self.flash = Flash(self.memory, self.chip)
+            self.flash.debug_states = dict(once.core_states)
             self.flash.authentication = self.authentication
             if not self.prepare_flash:
                 # Authentication needs debug/status access only.

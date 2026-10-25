@@ -14,6 +14,7 @@ from unittest.mock import patch
 
 from spc5tool.web import Workspace, make_server
 from tests.backends import workspace_backend, tigard_descriptor
+from tests.test_images import record
 
 
 class WebTests(unittest.TestCase):
@@ -141,6 +142,44 @@ class WebTests(unittest.TestCase):
         self.assertEqual(failed["status"], "failed")
         self.assertIn("verify mismatch", failed["error"])
         self.assertEqual(self.complete(self.payload())["status"], "complete")
+
+    def test_srecord_segments_roundtrip_original_download_and_address_guards(self):
+        raw = record('1', 8, b'AAAAAAAA') + record('2', 0x800000, b'BBBBBBBB')
+        code, image = self.call('/api/files?name=fixture.S19', raw, raw=True)
+        self.assertEqual(code, 200, image)
+        self.assertEqual(image['size'], 16)
+        self.assertEqual(image['format'], 'srec')
+        self.assertEqual(self.call('/api/download/' + image['id'])[1], raw)
+        self.assertEqual(self.call('/api/buffer/' + image['id'] + '?segment=1')[1], b'BBBBBBBB')
+        for kwargs in ({}, {'segment': 1, 'address': 0}, {'segment': True}, {'segment': 8}):
+            code, error = self.call('/api/plan', self.payload(action='write', file_id=image['id'], **kwargs))
+            self.assertEqual(code, 400, error)
+        result = self.complete(self.payload(action='write', file_id=image['id'], segment=1, address=0x800000))
+        self.assertEqual(result['status'], 'complete', result)
+        self.assertEqual(result['plan']['length'], 8)
+        read = self.complete(self.payload(address=0x800000, length=16))
+        self.assertEqual(self.call('/api/download/' + read['result']['file']['id'])[1], b'BBBBBBBB' + b'\xff' * 8)
+        # The unselected segment remains untouched, even in a different region.
+        read = self.complete(self.payload(address=0, length=32))
+        self.assertEqual(self.call('/api/download/' + read['result']['file']['id'])[1], b'\xff' * 32)
+        result = self.complete(self.payload(action='verify', file_id=image['id'], segment=1, address=0x800000))
+        self.assertEqual(result['status'], 'complete', result)
+        self.assertEqual(self.call('/api/rename', {'file_id': image['id'], 'name': 'bad.bin'})[0], 400)
+        self.assertEqual(self.call('/api/buffer/' + image['id'] + '?segment=2')[0], 400)
+
+    def test_srecord_otp_uses_program_and_rejects_bad_data_before_planning(self):
+        raw = record('2', 0x400000, b'12345678')
+        _, image = self.call('/api/files?name=otp.s19', raw, raw=True)
+        payload = self.payload(action='program', address=0x400000, file_id=image['id'])
+        self.assertEqual(self.call('/api/plan', {**payload, 'action': 'write'})[0], 400)
+        result = self.complete(payload)
+        self.assertEqual(result['status'], 'complete', result)
+        self.assertEqual(result['plan']['length'], 8)
+        result = self.complete({**payload, 'action': 'verify'})
+        self.assertEqual(result['status'], 'complete', result)
+        files_before = len(self.server.workspace.files)
+        self.assertEqual(self.call('/api/files?name=bad.s19', raw[:-4] + b'00\r\n', raw=True)[0], 400)
+        self.assertEqual(len(self.server.workspace.files), files_before)
 
     def test_otp_full_workflow_and_unavailable_operations(self):
         for target, address, unit in (("spc560b64", 0x400000, 8), ("spc560b64", 0xC00000, 8),

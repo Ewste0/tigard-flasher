@@ -237,6 +237,38 @@ class OnceTests(unittest.TestCase):
         with self.assertRaises(OperationTimeout):
             once.wait_debug()
 
+    def test_z0h_initial_error_is_not_a_new_single_step_failure(self):
+        once, tap = self.make_once()
+        once.status = Mock(return_value=0x309)
+        once.attach()
+        self.assertTrue(once.core_states['core0']['prior_step_error'])
+        self.assertEqual(once.core_states['core0']['state'], 'halted')
+        # A new instruction MUST still fail on ERR; no data read/retry follows.
+        with patch.object(once, 'read_register') as read:
+            with self.assertRaisesRegex(DriverError, 'single-step 0x501F0000.*OSR=0x309'):
+                once.step(0x501F0000, 0x800000, force_operand=True)
+            read.assert_not_called()
+        once.status.return_value = 0x209
+        self.assertEqual(once.step(0x501F0000, 0x800000, force_operand=True), 0)
+
+    def test_entry_does_not_ignore_checkstop_invalid_scan_or_reset(self):
+        for status in (0, 0x3FF, 0x389):
+            once, _ = self.make_once()
+            once.status = Mock(return_value=status)
+            with self.assertRaises(DriverError):
+                once.attach()
+        for status in (0x349, 0x109):  # Reset still asserted / clock not running.
+            once, _ = self.make_once()
+            once.status = Mock(return_value=status)
+            clock = Mock()
+            clock.monotonic.side_effect = count(0.0, 0.5)
+            with patch('spc5tool.once.time', clock), self.assertRaisesRegex(DriverError, 'did not halt'):
+                once.attach()
+        once, _ = self.make_once(SPC5748G)
+        once.status = Mock(return_value=0x309)
+        with self.assertRaisesRegex(DriverError, 'instruction execution error'):
+            once.attach()
+
     def test_nexus_register_vector(self):
         once, tap = self.make_once(SPC5748G)
         once.nexus_write(9, 0x1000000)

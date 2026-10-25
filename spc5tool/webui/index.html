@@ -8,15 +8,15 @@
 </head>
 <body>
   <header class="titlebar">
-    <div class="brand"><span class="brand-mark">T</span><div>Tigard <strong>Flasher</strong><span class="version">LOCAL / 0.7.2</span></div></div>
+    <div class="brand"><span class="brand-mark">T</span><div>Tigard <strong>Flasher</strong><span class="version">LOCAL / 0.7.3</span></div></div>
     <div class="title-right"><span class="mode-pill live" id="modeBadge"><i></i> Tigard hardware</span><button id="settingsButton" class="title-button" data-icon="settings">Settings</button></div>
   </header>
   <nav class="file-toolbar" aria-label="File tools">
-    <button id="openButton" data-icon="folder">Open binary<span class="keyhint">⌘ O</span></button>
+    <button id="openButton" data-icon="folder">Open image<span class="keyhint">⌘ O</span></button>
     <button id="saveButton" data-icon="save" disabled>Save dump</button>
     <button id="identifyButton" data-icon="scan">Identify target</button>
     <span class="toolbar-spacer"></span><button id="logButton" data-icon="terminal" aria-expanded="true">Session log</button>
-    <input type="file" id="fileInput" accept=".bin,.rom,.img,.dump,application/octet-stream" hidden>
+    <input type="file" id="fileInput" accept=".bin,.rom,.img,.dump,.s19,.s28,.s37,.srec,.srecord,.mot,application/octet-stream" hidden>
   </nav>
   <div class="operation-toolbar" aria-label="Flash operations">
     <span class="toolbar-label">FLASH TOOLS</span>
@@ -69,10 +69,11 @@
         <div class="read-options"><div><label for="readScope">Read selection</label><select id="readScope"><option value="custom">Custom range</option></select></div><div class="save-name"><label for="saveName">Save filename</label><input id="saveName" maxlength="100" placeholder="My_dump.bin" spellcheck="false"></div><span id="profileNote"></span></div>
         <div class="range-bar"><div><label for="addressInput">START ADDRESS</label><input id="addressInput" value="0x00000000" spellcheck="false"></div><span class="range-arrow">→</span><div><label for="lengthInput">READ / ERASE LENGTH</label><input id="lengthInput" value="0x8000" spellcheck="false"></div><button id="regionRange" data-icon="expand">Use region</button><span id="rangeHint">32 KiB selected</span></div>
         <div id="bufferView" role="tabpanel" aria-labelledby="bufferTab">
-          <div class="image-info"><span class="file-symbol" data-icon="file"></span><div class="image-name"><strong id="fileName">No binary loaded</strong><span id="fileDetails">Open a binary file or read from the connected target.</span></div><span class="image-tag" id="fileTag">EMPTY BUFFER</span></div>
-          <div class="hex-header"><span>OFFSET</span><span>00 01 02 03 04 05 06 07 08 09 0A 0B 0C 0D 0E 0F</span><span>ASCII</span></div>
-          <div id="dropZone" class="buffer-body"><div id="emptyBuffer" class="empty-buffer"><div class="empty-icon" data-icon="file"></div><h3>Your next flash starts here.</h3><p>Drop a raw binary into the buffer.<br>Or read flash from the connected target.</p><div><button id="emptyOpen" class="primary" data-icon="folder">Open binary</button></div><small>.bin · .rom · .img · up to 16 MiB</small></div><div id="hexScroll" tabindex="0" role="region" aria-label="Scrollable hex and ASCII dump" hidden><div id="hexCanvas"><pre id="hexRows" aria-label="Binary hex preview"></pre></div></div></div>
-          <div class="buffer-footer"><span id="bufferPosition">0 bytes in buffer</span><form id="jumpForm" class="offset-controls"><label for="jumpOffset">Go to offset</label><input id="jumpOffset" placeholder="0x00000000" aria-label="File offset, decimal or hexadecimal" spellcheck="false"><button id="jumpButton" type="submit" disabled>Go</button></form><span class="read-only" data-icon="lock">Read-only preview</span></div>
+          <div class="image-info"><span class="file-symbol" data-icon="file"></span><div class="image-name"><strong id="fileName">No image loaded</strong><span id="fileDetails">Open a binary or S-record file, or read from the connected target.</span></div><span class="image-tag" id="fileTag">EMPTY BUFFER</span></div>
+          <div id="imageSegmentRow" class="range-bar" hidden><div><label for="imageSegment">S-RECORD SEGMENT</label><select id="imageSegment"></select></div><span>Only the selected segment is used. Original addresses; gaps preserved.</span></div>
+          <div class="hex-header"><span id="hexAddressLabel">OFFSET</span><span>00 01 02 03 04 05 06 07 08 09 0A 0B 0C 0D 0E 0F</span><span>ASCII</span></div>
+          <div id="dropZone" class="buffer-body"><div id="emptyBuffer" class="empty-buffer"><div class="empty-icon" data-icon="file"></div><h3>Your next flash starts here.</h3><p>Drop a binary or S-record into the buffer.<br>Or read flash from the connected target.</p><div><button id="emptyOpen" class="primary" data-icon="folder">Open image</button></div><small>.bin · .s19 · .srec · up to 16 MiB decoded</small></div><div id="hexScroll" tabindex="0" role="region" aria-label="Scrollable hex and ASCII dump" hidden><div id="hexCanvas"><pre id="hexRows" aria-label="Binary hex preview"></pre></div></div></div>
+          <div class="buffer-footer"><span id="bufferPosition">0 bytes in buffer</span><form id="jumpForm" class="offset-controls"><label id="jumpLabel" for="jumpOffset">Go to offset</label><input id="jumpOffset" placeholder="0x00000000" aria-label="File offset, decimal or hexadecimal" spellcheck="false"><button id="jumpButton" type="submit" disabled>Go</button></form><span class="read-only" data-icon="lock">Read-only preview</span></div>
           <div class="checksum"><span>SHA-256</span><code id="checksumValue">Load an image to calculate its checksum</code></div>
         </div>
         <div id="mapView" role="tabpanel" aria-labelledby="mapTab" hidden><div class="view-intro"><h3>Flash block layout</h3><p>Select a block to use its exact erase range.</p></div><div id="blockGrid"></div></div>

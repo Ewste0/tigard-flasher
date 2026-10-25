@@ -10,6 +10,7 @@ from pathlib import Path
 from . import chips
 from .errors import DriverError
 from .files import save_backup, write_new, sha256
+from .images import decode_image, MAX_UPLOAD
 from .flash import Flash
 from .geometry import Block, backup_blocks, blocks_for, select_blocks
 from .idcode import read_idcode
@@ -117,7 +118,14 @@ def backend(args):
 def _operation(args):
     if not args.spi and chips.get(args.chip).read_only and args.action in MUTATING:
         raise ValueError("Selected target is a read-only profile")
-    data = Path(args.file).read_bytes() if args.action in ("write", "program", "verify") else None
+    data = None
+    image = None
+    if args.action in ("write", "program", "verify"):
+        with Path(args.file).open('rb') as stream:
+            image = decode_image(args.file, stream.read(MAX_UPLOAD + 1))
+        args.address, data = image.select(getattr(args, "segment", None), args.address)
+    if args.address is None:
+        raise ValueError("this operation requires --address")
     size = len(data) if data is not None else args.length
     blocks = _blocks(args, args.address, size, whole=args.action == "erase")
     if getattr(args, "fast_read", False) is None:
@@ -143,6 +151,10 @@ def _operation(args):
         plan["fast_read"] = getattr(args, "fast_read", False)
     if data is not None:
         plan["sha256"] = sha256(data)
+        if image.segments:
+            plan["format"] = "srec"
+            plan["segment"] = getattr(args, "segment", None) or 0
+            plan["note"] = "Only the selected segment at its original address; other segments and gaps are preserved."
     if args.action == "plan" or (args.action in MUTATING and not args.execute):
         plan["executed"] = False
         emit(plan)
@@ -282,7 +294,10 @@ def _commands(sub, spi=False):
                                         "verify": "compare flash with a binary file"}[action])
         _common(p, spi)
         _connection(p)
-        p.add_argument("--address", required=True, type=integer, help="physical address (not file offset)")
+        p.add_argument("--address", required=action not in ("write", "program", "verify"), type=integer,
+                       help="physical address; required for binary input, must match S-record address if given")
+        if action in ("write", "program", "verify"):
+            p.add_argument("--segment", type=integer, help="zero-based S-record segment; required for multiple segments")
         if action in ("read", "write", "program", "erase", "verify", "blank") and not spi:
             read_mode = p.add_mutually_exclusive_group()
             read_mode.add_argument("--fast-read", action="store_true", default=None,
@@ -293,7 +308,7 @@ def _commands(sub, spi=False):
         if action in ("read", "erase", "plan", "blank"):
             p.add_argument("--length", required=True, type=integer)
         if action in ("read", "write", "program", "verify"):
-            p.add_argument("file", help="raw binary input/output")
+            p.add_argument("file", help="binary output; binary or Motorola S-record input")
         if action in MUTATING:
             p.add_argument("--execute", action="store_true", help="perform operation; otherwise only print plan")
             p.add_argument("--backup", type=Path, help="new directory for affected-block backups (OTP: touched ECC units only) and SHA-256 manifest")

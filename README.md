@@ -125,7 +125,19 @@ python3 -m spc5tool read mpc5748g config.bin --address 0xFA8000 --length 0x8000 
 python3 -m spc5tool spi info w25q128jv
 ```
 
-Use raw `.bin` images, not PCP, HEX, S-records, executables, or simulator archives.
+Use raw `.bin` or Motorola S-record images (`.S19`, `.s28`, `.s37`, `.srec`, `.mot`).
+S-record checksums, lengths and overlaps are checked before an operation can be
+planned. The viewer shows decoded bytes at their physical addresses. Loading a
+segment sets its original start address and length; it cannot be relocated.
+Sparse files have a segment selector: Write, Program and Verify process only
+that segment, preserving gaps and other segments. Downloads preserve the original
+S-record text. Up to 16 MiB decoded data / 64 MiB input text is supported.
+PCP, Intel HEX, executables and simulator archives are not supported images.
+
+For S-record CLI input, omit `--address` to use the embedded address. If the file
+has several segments, add `--segment N` (zero-based). An explicit `--address`
+must match the selected segment. Example: `python -m spc5tool write spc560b64 DFlash.S19`
+prints a plan without opening USB.
 `write`, `program`, and `erase` initially print a plan. Execution needs
 `--execute --backup NEW_DIRECTORY`; live MCU modification also needs
 `--expect-idcode` matching the target. `write` backs up affected blocks, preserves
@@ -134,7 +146,7 @@ for already-erased flash; alignment is 8 bytes on SPC560/MPC5748 and 16 bytes on
 SPC58H. `erase` requires whole blocks and cannot erase OTP. SHADOW erase restores
 its security/boot configuration tail before returning; only its user area is left blank.
 
-For OTP, select its region and use **Program once** after loading the binary.
+For OTP, select its region and use **Program once** after loading the image.
 The tool checks the input range, saves the original block, requires erased input
 units, programs, and verifies. **Blank check** means every requested byte reads FF;
 it cannot prove an ECC unit has never been programmed by another tool. Never

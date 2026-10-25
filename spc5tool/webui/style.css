@@ -1190,6 +1190,11 @@ dialog::backdrop {
   overflow-wrap:anywhere;
   color:#8393ad;
 }
+#imageSegmentRow { flex-wrap:wrap; }
+#imageSegmentRow>div { width:min(360px,100%); }
+#imageSegment { width:100%; }
+#imageSegmentRow>span { flex:1 1 200px; }
+
 [hidden] {
   display:none!important;
 }

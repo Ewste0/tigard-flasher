@@ -32,6 +32,7 @@ let activeJob = null, suggestedName = "";
 let adapterState = null, adapterChecking = false;
 let adapterRequest = 0, adapterSaving = false;
 let viewBytes = null, viewFileId = null, scrollFrame = null;
+let imageSegment = 0, viewBase = 0;
 const HEX_ROW_HEIGHT = 22;
 const hex = (n) => "0x" + Number(n).toString(16).toUpperCase().padStart(8, "0");
 const sizeText = (n) => n >= 1048576 ? `${Number((n / 1048576).toFixed(2))} MiB` : n >= 1024 ? `${Number((n / 1024).toFixed(2))} KiB` : `${n} bytes`;
@@ -69,6 +70,7 @@ function log(text, level = "INFO", timestamp = Date.now()) {
   $("logCount").textContent = `${++eventCount} events`;
 }
 function controls() {
+  $("imageSegment").disabled = !ready || busy;
   for (const button of document.querySelectorAll("[data-operation]")) {
     const action = button.dataset.operation;
     const mutation = ["write", "program", "erase"].includes(action);
@@ -255,27 +257,41 @@ function renderWiring() {
 $("wiringView").addEventListener("click", event => {
   const item = event.target.closest("[data-wire]"); if (item) selectWire(item.dataset.wire);
 });
-async function loadFile(info) {
+async function loadFile(info, segmentIndex = 0) {
   file = info;
+  imageSegment = segmentIndex;
+  const segment = info.segments?.[segmentIndex];
+  viewBase = segment?.address || 0;
+  $("imageSegmentRow").hidden = !segment;
+  $("imageSegment").replaceChildren(...(info.segments || []).map((s, i) => new Option(`${i + 1} · ${hex(s.address)}–${hex(s.address + s.size - 1)} · ${sizeText(s.size)}`, String(i), false, i === segmentIndex)));
+  $("jumpLabel").textContent = segment ? "Go to address" : "Go to offset";
+  $("hexAddressLabel").textContent = segment ? "ADDRESS" : "OFFSET";
+  $("jumpOffset").setAttribute("aria-label", segment ? "MCU address, decimal or hexadecimal" : "File offset, decimal or hexadecimal");
+  if (segment) {
+    $("addressInput").value = hex(segment.address);
+    $("lengthInput").value = hex(segment.size);
+    updateRange();
+  }
   $("fileName").textContent = file.name;
   $("saveName").value = file.name;
   suggestedName = file.name;
-  $("fileDetails").textContent = `${sizeText(file.size)} · ${file.size.toLocaleString()} bytes · ${file.kind === "dump" ? "Flash readout" : "Raw binary image"}`;
-  $("fileTag").textContent = file.kind === "dump" ? "READ COMPLETE" : "BINARY IMAGE";
+  $("fileDetails").textContent = `${sizeText(file.size)} · ${file.size.toLocaleString()} decoded bytes · ${segment ? `Motorola S-record · ${info.segments.length} segment(s)` : file.kind === "dump" ? "Flash readout" : "Raw binary image"}`;
+  $("fileTag").textContent = segment ? "S-RECORD" : file.kind === "dump" ? "READ COMPLETE" : "BINARY IMAGE";
   $("fileTag").classList.add("loaded"); $("checksumValue").textContent = file.sha256;
   $("emptyBuffer").hidden = true; $("hexScroll").hidden = false;
   tab("buffer");
   const sequence = ++previewSequence;
-  if (viewFileId !== info.id) {
+  const viewKey = `${info.id}:${segmentIndex}`;
+  if (viewFileId !== viewKey) {
     viewBytes = null; viewFileId = null; $("hexRows").replaceChildren();
     $("hexCanvas").style.height = "0px";
     $("bufferPosition").textContent = "Loading dump…";
-    const response = await fetch(`/api/download/${info.id}`);
+    const response = await fetch(`/api/buffer/${info.id}?segment=${segmentIndex}`);
     if (!response.ok) throw new Error("Could not load the dump for scrolling.");
     const data = new Uint8Array(await response.arrayBuffer());
     if (sequence !== previewSequence) return;
-    if (data.length !== info.size) throw new Error("The dump download was incomplete.");
-    viewBytes = data; viewFileId = info.id;
+    if (data.length !== (segment?.size || info.size)) throw new Error("The dump download was incomplete.");
+    viewBytes = data; viewFileId = viewKey;
   }
   $("hexCanvas").style.height = `${Math.ceil(viewBytes.length / 16) * HEX_ROW_HEIGHT}px`;
   $("hexScroll").scrollTop = 0;
@@ -283,7 +299,7 @@ async function loadFile(info) {
   preview(); controls();
 }
 function preview() {
-  if (!viewBytes || !file || viewFileId !== file.id) return;
+  if (!viewBytes || !file || viewFileId !== `${file.id}:${imageSegment}`) return;
   const viewport = $("hexScroll"), rowCount = Math.ceil(viewBytes.length / 16);
   const visibleRow = Math.min(rowCount - 1, Math.floor(viewport.scrollTop / HEX_ROW_HEIGHT));
   const visibleCount = Math.ceil((viewport.clientHeight || 360) / HEX_ROW_HEIGHT);
@@ -296,7 +312,7 @@ function preview() {
     const rowOffset = index * 16;
     const line = document.createElement("span"); line.className = "hex-row";
     line.dataset.offset = rowOffset;
-    const address = document.createElement("span"); address.className = "hex-offset"; address.textContent = rowOffset.toString(16).toUpperCase().padStart(8,"0");
+    const address = document.createElement("span"); address.className = "hex-offset"; address.textContent = (viewBase + rowOffset).toString(16).toUpperCase().padStart(8,"0");
     const bytes = document.createElement("span"); bytes.className = "hex-bytes";
     let ascii = "";
     for (let i = 0; i < 16; i++) {
@@ -313,7 +329,7 @@ function preview() {
   $("hexRows").replaceChildren(fragment);
   const start = visibleRow * 16;
   const end = Math.min(viewBytes.length - 1, (visibleRow + visibleCount) * 16 - 1);
-  $("bufferPosition").textContent = `${hex(start)}–${hex(end)} · ${file.size.toLocaleString()} bytes`;
+  $("bufferPosition").textContent = `${hex(viewBase + start)}–${hex(viewBase + end)} · ${viewBytes.length.toLocaleString()} bytes`;
 }
 function queuePreview() {
   if (scrollFrame !== null) return;
@@ -346,20 +362,28 @@ $("jumpForm").addEventListener("submit", event => {
   event.preventDefault();
   if (!viewBytes) return;
   try {
-    const address = number($("jumpOffset").value);
-    if (address >= viewBytes.length) throw new Error(`Offset must be below ${hex(viewBytes.length)} for this file.`);
+    const address = number($("jumpOffset").value) - viewBase;
+    if (address < 0 || address >= viewBytes.length) throw new Error(`Enter a value from ${hex(viewBase)} to ${hex(viewBase + viewBytes.length - 1)}.`);
     $("hexScroll").scrollTop = Math.floor(address / 16) * HEX_ROW_HEIGHT;
     preview(); $("hexScroll").focus();
   } catch (error) { message(error); }
+});
+
+$("imageSegment").addEventListener("change", async () => {
+  if (!file || busy) return;
+  setBusy(true);
+  try { await loadFile(file, Number($("imageSegment").value)); }
+  catch (error) { message(error); }
+  finally { setBusy(false); }
 });
 
 async function upload(input) {
   if (!input || busy) return;
   setBusy(true);
   try {
-    if (!input.size || input.size > 16 * 1024 * 1024) throw new Error("Choose a nonempty raw binary up to 16 MiB.");
+    if (!input.size || input.size > 64 * 1024 * 1024) throw new Error("Choose binary or S-record input up to 64 MiB (16 MiB decoded).");
     const info = await api(`/api/files?name=${encodeURIComponent(input.name)}`, input, true);
-    await loadFile(info); log(`Loaded ${info.name} (${sizeText(info.size)}). Write and verify use the image length.`);
+    await loadFile(info); log(`Loaded ${info.name} (${sizeText(info.size)}). ${info.format === "srec" ? "Checksums verified. Write, Program and Verify use only the selected segment at its original address." : "Write and verify use the image length."}`);
   } catch (error) { message(error); } finally { setBusy(false); $("fileInput").value = ""; }
 }
 function request(action) {
@@ -369,7 +393,8 @@ function request(action) {
     read_delay_us:readDelayUs,
     filename:$("saveName").value, password:target.password_login && action !== "identify" ? $("currentPassword").value : "",
     ...(action === "install_password" ? {new_password:$("newPassword").value, confirm_password:$("confirmPassword").value, password_slot:$("passwordSlot").value} : {}),
-    address:action === "identify" ? 0 : number($("addressInput").value), length:action === "identify" ? 0 : number($("lengthInput").value), file_id:file?.id};
+    address:action === "identify" ? 0 : number($("addressInput").value), length:action === "identify" ? 0 : number($("lengthInput").value), file_id:file?.id,
+    ...(file?.format === "srec" ? {segment:imageSegment} : {})};
 }
 async function operation(action) {
   if (busy) return; setBusy(true);

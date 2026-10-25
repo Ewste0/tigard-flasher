@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.7.3 — 2026-10-25
+
+- Import Motorola S-record files in the UI and CLI, validating checksums, record
+  counts, addresses and overlaps. Show decoded bytes at MCU addresses; choose
+  sparse segments explicitly without padding gaps or relocating data.
+- Preserve original S-record downloads. Write, Verify and Program once use the
+  selected segment, with existing backup, alignment and OTP protections.
+- Correct SPC560/e200z0h debug entry handling for initial `OSR=0x309`:
+  DEBUG is already set; ERR describes the previous single-step. Initial entry
+  accepts that state, while every new instruction still fails on ERR. Checkstop,
+  reset and invalid scans remain guarded; instruction failures show opcode/PC.
+- This debug-entry correction has offline regression coverage; successful reading
+  of the reported SPC560B64L3 on Windows still requires a hardware retest.
+- Windows setup reuses the verified v0.7.2 USB helper release.
+
 ## 0.7.2 — 2026-10-25
 
 - Detect newly connected Tigards every three seconds while the UI is idle.

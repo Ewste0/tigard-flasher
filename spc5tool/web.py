@@ -19,6 +19,7 @@ from .adapters import discover_tigards
 from .usb_backend import usb_error_message
 from .errors import DriverError
 from .files import save_backup, sha256, write_new
+from .images import decode_image, MAX_IMAGE, MAX_UPLOAD, SREC_SUFFIXES
 from .flash import Flash
 from .geometry import Block, backup_blocks, blocks_for, select_blocks
 from .idcode import read_idcode
@@ -27,7 +28,6 @@ from .session import TargetSession
 from .spi import PARTS, SpiNor
 from .security import parse_password, password_address, provision, validate_login, installation_message
 
-MAX_IMAGE = 16 * 1024 * 1024
 MUTATING = {"write", "erase", "program", "install_password"}
 ACTIONS = {"read", "write", "program", "verify", "erase", "blank", "identify", "install_password", "authenticate"}
 ASSETS = Path(__file__).with_name("webui")
@@ -164,6 +164,10 @@ class Workspace:
             return self._select_detected(state["devices"])
 
     def add_file(self, name, data, kind="image"):
+        image = decode_image(name, data) if kind == "image" else None
+        source = data
+        if image:
+            data = image.data
         limit = MAX_IMAGE + 1024 * 1024 if kind == "backup" else MAX_IMAGE
         if not data or len(data) > limit:
             raise ValueError("image must contain 1 byte to 16 MiB")
@@ -172,6 +176,13 @@ class Workspace:
         path = self.directory / "files" / key
         write_new(path, data)
         info = {"id": key, "name": name, "size": len(data), "sha256": sha256(data), "kind": kind}
+        if image and image.segments:
+            write_new(path.with_suffix('.source'), source)
+            info.update(format="srec", source_size=len(source), source_sha256=sha256(source),
+                        entry_address=image.entry,
+                        segments=[{"address": a, "offset": o, "size": s} for a, o, s in image.segments])
+            if Path(name).suffix.lower() not in SREC_SUFFIXES:
+                info['name'] = str(Path(name).with_suffix('.s19'))
         with self.lock:
             self.files[key] = info
         return dict(info)
@@ -186,6 +197,8 @@ class Workspace:
         name = safe_filename(name)
         with self.lock:
             info, _ = self.file(key)
+            if info.get("format") == "srec" and Path(name).suffix.lower() not in SREC_SUFFIXES:
+                raise ValueError("S-record downloads preserve the original text; use a .s19 or .srec filename")
             self.files[key]["name"] = name
             for job in self.jobs.values():
                 for item in (job["result"].get("file"), job["result"].get("backup")):
@@ -240,6 +253,8 @@ class Workspace:
         size = number(request.get("length", 0), "length", MAX_IMAGE)
         file_id = request.get("file_id")
         info = None
+        image_offset = 0
+        segment_index = None
         secret = {}
         if request.get("password"):
             if target not in chips.CHIPS:
@@ -262,6 +277,16 @@ class Workspace:
             if info["kind"] == "backup":
                 raise ValueError("a backup archive is not a raw firmware image")
             size = info["size"]
+            if info.get("format") == "srec":
+                segment_index = request.get("segment")
+                if segment_index is None and len(info["segments"]) == 1:
+                    segment_index = 0
+                if type(segment_index) is not int or not 0 <= segment_index < len(info["segments"]):
+                    raise ValueError("select an S-record segment explicitly")
+                segment = info["segments"][segment_index]
+                if address != segment["address"]:
+                    raise ValueError(f"S-record segment requires address 0x{segment['address']:08X}; select its original range")
+                size, image_offset = segment["size"], segment["offset"]
         blocks = ()
         if action not in ("identify", "authenticate"):
             if target in PARTS:
@@ -296,11 +321,14 @@ class Workspace:
                 "address": address, "length": size, "frequency": frequency, "expected_id": expected,
                 "fast_read": fast_read, "read_delay_us": read_delay_us,
                 "file_id": file_id if info else None, "image": info,
+                "image_offset": image_offset, "segment": segment_index,
                 "blocks": [asdict(b) for b in blocks], "backup_bytes": sum(b.size for b in backups),
                 "backup_ranges": [asdict(b) for b in backups],
                 "preserve": action == "write", "filename": filename}
         plan["password_slot"] = slot if action == "install_password" else None
         plan["notes"] = []
+        if segment_index is not None:
+            plan["notes"].append(f"S-record segment {segment_index + 1}/{len(info['segments'])}, using its original address. Only this segment is selected; gaps and other segments are not programmed.")
         if fast_read:
             plan["notes"].append(f"Queued CFLASH read; {read_delay_us} microsecond settling delay. Every word's status is checked; a target that is not ready falls back to standard reads.")
             if action in ("write", "program"):
@@ -424,11 +452,23 @@ class Workspace:
                             raise DriverError(str(code))
                         result = {"message": str(code), "idcode": code.raw}
             else:
-                data = self.file(plan["file_id"])[1].read_bytes() if plan["file_id"] else None
+                data = None
+                if plan["file_id"]:
+                    with self.file(plan["file_id"])[1].open('rb') as stream:
+                        stream.seek(plan.get("image_offset", 0))
+                        data = stream.read(plan["length"])
+                    if len(data) != plan["length"]:
+                        raise ValueError("image data is incomplete")
                 self._log(job, f"{action.replace('_', ' ').capitalize()} {plan['length']:,} bytes at 0x{plan['address']:08X}.")
                 with self._backend(plan, progress) as flash:
                     if isinstance(flash, Flash):
                         flash.before_modify = before_modify
+                    states = getattr(flash, "debug_states", None)
+                    if states:
+                        result["debug_states"] = states
+                        for core, state in states.items():
+                            if state.get("prior_step_error"):
+                                self._log(job, f"{core}: initial OSR={state['osr']} reported DEBUG with a prior instruction error. New debug instructions passed their status checks.")
                     if plan.get("fast_read"):
                         self._log(job, f"Queued CFLASH reads enabled for data, backups and verification; {plan['read_delay_us']} microseconds delay.")
                     authentication = getattr(flash, "authentication", None)
@@ -599,7 +639,7 @@ class Handler(BaseHTTPRequestHandler):
             query = parse_qs(url.query)
             workspace = self.server.workspace
             if post:
-                limit = MAX_IMAGE if path == "/api/files" else 32768
+                limit = MAX_UPLOAD if path == "/api/files" else 32768
                 length = number(self.headers.get("Content-Length", "0"), "content length", limit)
                 body = self.rfile.read(length)
                 if len(body) != length:
@@ -632,10 +672,21 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, workspace.adapter())
             elif path.startswith("/api/jobs/"):
                 self._send(200, workspace.snapshot(path.rsplit("/", 1)[1]))
-            elif path.startswith("/api/files/") or path.startswith("/api/download/"):
+            elif path.startswith(("/api/files/", "/api/download/", "/api/buffer/")):
                 info, file_path = workspace.file(path.rsplit("/", 1)[1])
                 if path.startswith("/api/download/"):
+                    if info.get("format") == "srec":
+                        file_path = file_path.with_suffix('.source')
                     self._send(200, file_path.read_bytes(), "application/octet-stream", info["name"])
+                elif path.startswith("/api/buffer/"):
+                    offset, size = 0, info["size"]
+                    if info.get("format") == "srec":
+                        index = number(query.get("segment", ["0"])[0], "segment", len(info["segments"]) - 1)
+                        segment = info["segments"][index]
+                        offset, size = segment["offset"], segment["size"]
+                    with file_path.open('rb') as stream:
+                        stream.seek(offset)
+                        self._send(200, stream.read(size), "application/octet-stream")
                 else:
                     offset = number(query.get("offset", ["0"])[0], "offset", info["size"])
                     with file_path.open("rb") as stream:
