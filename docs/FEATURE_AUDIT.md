@@ -1,6 +1,7 @@
 # MCU, OTP and PROGPPCNEXUS audit
 
-Reviewed 2026-10-25 for version 0.7.6. Scope: all six shipped MCU profiles,
+Reviewed 2026-10-25 for version 0.7.6, with the 0.7.7 grouped-erase follow-up in
+[VALIDATION.md](VALIDATION.md). Scope: all six shipped MCU profiles,
 their mapped regions, controller operations, security paths, transport failures,
 file/backup handling, and UI/API/CLI operation guards. The W25Q128JV ordinary
 SPI array path was also reviewed. This is a source/static-evidence and offline

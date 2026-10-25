@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.7.7 — 2026-10-25
+
+- Erase selected ordinary MCU blocks together within each controller/region,
+  using combined selector masks and one high-voltage operation. Full CFLASH
+  uses one controller operation instead of 10/12/16 on SPC560B54/B60/B64,
+  38 on MPC5748G or 48 on SPC58NH/EH. SHADOW remains separate; OTP cannot erase.
+- Scale only the active erase deadline by selected block count; completion
+  still returns immediately on DONE. Keep selector readback, lock restoration,
+  controller errors and the complete post-erase blank check.
+- Apply the three-read-pass Write pipeline to ordinary CFLASH/DFLASH on every
+  MCU profile. Back up all affected blocks first, batch only changed blocks,
+  program them, and verify complete rebuilt blocks including preserved bytes.
+- Report backup, controller erase and blank-check times separately in the UI
+  log/API/CLI. Operation reviews show grouped erase behavior.
+- Add all-profile mask, neighboring-data, timeout, failure, read-traffic and
+  progress regressions. No physical erase was run during development; hardware
+  speed and equivalence to PROGPPCNEXUS remain unmeasured.
+
 ## 0.7.6 — 2026-10-25
 
 - Audit every shipped MCU profile against ST/NXP documentation and compare

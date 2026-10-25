@@ -1,5 +1,19 @@
 # Local release checks
 
+## 0.7.7 — 2026-10-25
+
+| Check | Result |
+| --- | --- |
+| Python suite | 225 passed in the full run; the additional CLI regression passed in the final focused run (226 tests total) |
+| Grouped erase | Nine regressions cover all six profiles, full/sparse selection masks, unchanged regions, stale selectors, locks, false-positive completion, USB failure, deadlines and progress |
+| Ordinary Write | All-profile CFLASH/DFLASH preservation; three reads per changed block, two per unchanged block; backup/blank/verification failure checks |
+| UI/API/CLI | Grouped erase plan, separate phase timings, backup and verified result; cancellation after mutation remains refused |
+| Wiring and browser | Both reset mappings, presets, controls, S-records and scrolling passed |
+
+No physical flash operation or new speed benchmark was performed. Tests count
+controller starts and bytes transferred; they do not simulate silicon erase time.
+See the grouped-erase evidence in [VALIDATION.md](VALIDATION.md).
+
 ## 0.7.6 — 2026-10-25
 
 Checked on macOS with Python 3.13.12 and the installed Chrome. No test opened

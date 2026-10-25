@@ -4,7 +4,7 @@ import math
 from contextlib import contextmanager
 
 from .errors import DriverError, NexusBusError, OperationTimeout, VerificationError
-from .geometry import select_blocks, validate_program_range
+from .geometry import select_blocks, validate_program_range, erase_groups
 from .mpsse import MpsseError
 
 DONE, PEG, PGM, ERS, EHV = 0x400, 0x200, 0x10, 4, 1
@@ -22,6 +22,7 @@ class Flash:
         self.before_modify = lambda: None
         self.bulk_program = False
         self.write_stats = None
+        self.erase_stats = None
 
     @contextmanager
     def stage(self, name, start=0, end=1):
@@ -101,8 +102,8 @@ class Flash:
             raise VerificationError(f"verify mismatch at 0x{address + offset:08x}: "
                                     f"expected {data[offset]:02x}, read {actual[offset]:02x}")
 
-    def _wait_done(self, base):
-        deadline = time.monotonic() + self.timeout
+    def _wait_done(self, base, timeout=None):
+        deadline = time.monotonic() + (self.timeout if timeout is None else timeout)
         while True:
             status = self.memory.read32(base)
             if status & DONE:
@@ -122,14 +123,14 @@ class Flash:
             raise
 
     @contextmanager
-    def _operation(self, base, mode):
+    def _operation(self, base, mode, timeout=None):
         self._idle(base)
         self.memory.write32(base, ERRORS)
         try:
             self.memory.write32(base, mode)
             yield
             self.memory.write32(base, mode | EHV)
-            status = self._wait_done(base)
+            status = self._wait_done(base, timeout)
             if not status & PEG or status & (ERRORS | (0xF0000000 if self.c55 else 0)):
                 raise DriverError(f"flash operation failed: MCR=0x{status:08x}")
         except MpsseError:
@@ -211,27 +212,59 @@ class Flash:
     def _erase(self, address, size):
         self._require_writable()
         blocks = select_blocks(self.chip, address, size, whole=True)
+        self._erase_blocks(blocks)
+
+    def _erase_blocks(self, blocks):
+        """Internal whole-block erase, including sparse changed blocks in Write.
+
+        All selected ordinary blocks of a controller/region share one EHV
+        operation. Only their geometry masks are combined; gaps remain intact.
+        A successful PEG still requires a full blank check of every block.
+        """
+        self._require_writable()
         self._check_blocks(blocks, erase=True)
-        with self._unlocked(blocks):
-            for index, block in enumerate(blocks):
-                self.progress("erase", round(index / len(blocks), 12), 1)
+        groups = erase_groups(blocks)
+        stats = self.erase_stats = dict(blocks=len(blocks), batches=len(groups),
+                                       erase_seconds=0.0, blank_check_seconds=0.0)
+        total, done = sum(b.size for b in blocks), 0
+        for group in groups:
+            block = group[0]
+            size = sum(b.size for b in group)
+            start, end = round(done / total, 12), round((done + size) / total, 12)
+            mid = start + (end - start) * 0.3
+            self.progress(f"controller erase ({len(group)} blocks)", start, 1)
+            started = time.monotonic()
+            with self._unlocked(group):
                 base = block.controller
-                with self._operation(base, ERS):
+                # Keep the old total deadline allowance, not a fixed 10 s for
+                # an entire chip. DONE completes early; this is not a delay.
+                with self._operation(base, ERS, timeout=self.timeout * len(group)):
                     offsets = (0x38, 0x3C, 0x40, 0x44) if self.c55 else (
                         (0x10,) if block.region == "DFLASH" else (0x10, 0x14))
                     for bank, offset in enumerate(offsets):
                         # C90 SHADOW is selected by the interlock address.
                         # Its TSLK bit (20) belongs to LML/SLL, not LMS/HBS.
                         # RM30.6.3: LMS/HBS do not select the shadow sector.
-                        value = block.mask if bank == block.bank and block.kind != "shadow" else 0
+                        value = 0
+                        for selected in group:
+                            if selected.bank == bank and selected.kind != "shadow":
+                                value |= selected.mask
                         self.memory.write32(base + offset, value)
                         if self.memory.read32(base + offset) != value:
                             raise DriverError("flash erase selector did not latch")
                     self.memory.write32(block.address, 0xFFFFFFFF)
-                # PEG alone does not prove a block was erased (e.g. a PASS lock).
-                with self.stage("blank check", (index + 0.5) / len(blocks), (index + 1) / len(blocks)):
-                    self.verify(block.address, b"\xff" * block.size)
-                self.progress("erase", round((index + 1) / len(blocks), 12), 1)
+            stats["erase_seconds"] += time.monotonic() - started
+            # Restore volatile locks before the read-only full blank check.
+            # Never read across unselected holes in a sparse Write selection.
+            checked, started = 0, time.monotonic()
+            for selected in group:
+                with self.stage("blank check", mid + (end - mid) * checked / size,
+                                mid + (end - mid) * (checked + selected.size) / size):
+                    self.verify(selected.address, b"\xff" * selected.size)
+                checked += selected.size
+            stats["blank_check_seconds"] += time.monotonic() - started
+            self.progress("erase and blank check", round(end, 12), 1)
+            done += size
 
     def program(self, address, data):
         validate_program_range(self.chip, address, len(data))
@@ -321,8 +354,8 @@ class Flash:
         self._check_blocks(blocks)
         if any(b.kind == "otp" for b in blocks):
             raise ValueError("OTP requires Program once; erase/preserve/write is unavailable")
-        if self.bulk_program and self.chip.key == "spc5748g" and all(b.region == "CFLASH" for b in blocks):
-            return self._patch_cflash(address, data, blocks, backup)
+        if all(b.kind == "flash" for b in blocks):
+            return self._patch_main(address, data, blocks, backup)
         originals = []
         total = sum(b.size for b in blocks)
         done = 0
@@ -361,7 +394,7 @@ class Flash:
         with self.stage("final verification", 0.95, 1):
             self.verify(address, data)
 
-    def _patch_cflash(self, address, data, blocks, backup):
+    def _patch_main(self, address, data, blocks, backup):
         """Three passes: durable backup, erase/blank check, final full-block verify.
 
         Keep erasing changed blocks even if their backup reads FF: erased-looking
@@ -385,27 +418,28 @@ class Flash:
             done += block.size
         backup(originals)  # Must succeed before any volatile lock or flash change.
         stats["backup_seconds"] = time.monotonic() - started
-        done = 0
-        for (block, original), patched in zip(originals, rebuilt):
-            start = 0.2 + 0.6 * done / total
-            end = 0.2 + 0.6 * (done + block.size) / total
-            if patched != original:
-                stats["changed_blocks"] += 1
-                mid = start + (end - start) / 3
-                started = time.monotonic()
-                with self.stage("erase and blank check", start, mid):
-                    self._erase(block.address, block.size)
-                stats["erase_blank_seconds"] += time.monotonic() - started
-                # _erase verifies every byte is blank before returning. No other
-                # target code runs between that proof and programming this block.
-                started = time.monotonic()
-                with self.stage("program", mid, end):
+        changed = [(block, patched) for (block, original), patched in zip(originals, rebuilt)
+                   if patched != original]
+        stats["changed_blocks"] = len(changed)
+        stats["unchanged_blocks"] = len(blocks) - len(changed)
+        if changed:
+            started = time.monotonic()
+            with self.stage("erase and blank check", 0.2, 0.4):
+                self._erase_blocks([block for block, _ in changed])
+            stats["erase_blank_seconds"] = time.monotonic() - started
+            stats["erase_batches"] = self.erase_stats["batches"]
+            # This session has just erased and checked every changed block.
+            # No target code runs before programming; reuse that blank proof.
+            total_changed, done = sum(b.size for b, _ in changed), 0
+            started = time.monotonic()
+            for block, patched in changed:
+                with self.stage("program", 0.4 + 0.4 * done / total_changed,
+                                0.4 + 0.4 * (done + block.size) / total_changed):
                     self._program_erased(block.address, patched, [block])
-                stats["program_seconds"] += time.monotonic() - started
-            else:
-                stats["unchanged_blocks"] += 1
-            self.progress("write", end, 1)
-            done += block.size
+                done += block.size
+            stats["program_seconds"] = time.monotonic() - started
+        else:
+            stats["erase_batches"] = 0
         # Verify complete rebuilt blocks, including preserved bytes outside the
         # image and unchanged blocks. A single final pass covers all of them.
         done, started = 0, time.monotonic()

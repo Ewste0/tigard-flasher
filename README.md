@@ -17,6 +17,9 @@ Screenshot uses generated test bytes; no firmware or connected target is shown.
 ## Features
 
 - Read, patch write, program, verify, erase, and blank check for supported flash regions.
+- Selected ordinary MCU blocks erase together within each controller/region.
+  Logs separate backup, controller erase and full blank-check time. Write uses
+  three full reads per changed block on all MCU profiles; SHADOW remains separate.
 - 5 MHz interface clock by default; lower clocks remain selectable.
 - Queued MPC5748G CFLASH reads are the default at 100 kHz or faster, with an adjustable
   settling delay and automatic polling fallback if the target is not ready.

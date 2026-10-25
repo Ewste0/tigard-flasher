@@ -1,5 +1,47 @@
 # Validation and scope
 
+## Grouped erase and ordinary Write — 0.7.7, 2026-10-25
+
+Ordinary flash erase previously restarted the controller for every block.
+The implementation now combines only the selected geometry masks and performs
+one erase per controller/region. Full CFLASH uses one operation for each profile:
+10 blocks on B54, 12 on B60, 16 on B64, 38 on MPC5748G, or 48 on SPC58H.
+DFLASH's four blocks also share one operation. Different regions/controllers
+execute sequentially. SHADOW uses its separate interlock path and OTP stays
+non-erasable. Partial selections never enable neighboring blocks or reserved bits.
+
+[ST UM1627 section 2.6.2](https://www.st.com/resource/en/user_manual/um1627-standard-software-driver-for-c90lc-flash-module-embedded-on-spc56-m-b-c-d-and-p-lines-microcontroller-stmicroelectronics.pdf)
+and [UM2636 section 2.7.2](https://www.st.com/resource/en/user_manual/um2636-standard-software-driver-for-c55-flash-module-embedded-on-spc58-b-c-e-h-g-and-n-lines-microcontroller-stmicroelectronics.pdf)
+permit combined main-array selections. Both also require checking the result:
+locked blocks may report successful completion without erasing. Every selected
+byte is therefore still blank-checked. The active timeout retains the previous
+total per-block allowance; the cleanup timeout remains unchanged. This is a
+maximum wait budget, not an added pause or an assumption of parallel silicon erase.
+
+Static P&E C90 loader evidence at `0x40000260..0x400002F6` shows combined low/mid/high
+selectors followed by one interlock/EHV sequence. Its blank checker at
+`0x40000134..0x4000014C` scans words on the target CPU. Our blank checker still
+reads bytes through JTAG. This difference and the mandatory backup can dominate
+elapsed time; grouping is not a claim of P&E-equivalent end-to-end speed.
+No vendor code was copied and no hardware was erased for this change.
+
+Ordinary Write now uses the same three-pass pipeline for all MCU profiles:
+durable complete-block backups, grouped erase with blank check, programming,
+then complete-block verification. Unchanged blocks are excluded from erase and
+program but are backed up and verified. For a fully changed image this reduces
+SPC560/SPC58 reads from five to three full passes; MPC5748's optimized path
+already used three. All changed blocks are erased before programming starts;
+an interruption can leave several blocks blank, so the backup remains essential.
+SHADOW restoration order and OTP programming are unchanged.
+
+Offline tests exercise all six profiles, full and sparse masks, untouched gaps,
+lock restoration, selector failures, false-positive erase status, USB failures,
+scaled active deadlines, cancellation and progress. Traffic tests count exactly
+three full reads of changed blocks and two of unchanged blocks, while checking
+the entire resulting array against expected preserved contents. UI/API/CLI
+report controller erase separately from backup and blank-check time. A real
+target benchmark is still needed; no new timing estimate is presented as a measurement.
+
 ## Full profile and OTP audit — 2026-10-25
 
 Version 0.7.6 audits every shipped MCU profile and compares supported operations

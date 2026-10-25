@@ -12,7 +12,7 @@ from .errors import DriverError
 from .files import save_backup, write_new, sha256
 from .images import decode_image, MAX_UPLOAD, SREC_SUFFIXES
 from .flash import Flash
-from .geometry import Block, backup_blocks, blocks_for, select_blocks, validate_program_range
+from .geometry import Block, backup_blocks, blocks_for, select_blocks, validate_program_range, erase_groups
 from .idcode import read_idcode
 from .mpsse import MpsseTransport, DEFAULT_URL, DEFAULT_FREQUENCY
 from .session import TargetSession
@@ -148,6 +148,8 @@ def _operation(args):
             "preserve_outside_image": args.action == "write", "hardware_validated": False}
     if args.action in MUTATING:
         plan["backup_ranges"] = [{"address": f"0x{b.address:08x}", "size": b.size} for b in backups]
+    if not args.spi and args.action == "erase":
+        plan["erase_batches"] = len(erase_groups(blocks))
     if args.action == "read":
         plan["fast_read"] = getattr(args, "fast_read", False)
     if data is not None:
@@ -187,10 +189,16 @@ def _operation(args):
             flash.verify(args.address, b"\xff" * size)
         elif args.action == "write":
             flash.patch(args.address, data, backup)
+            if isinstance(flash, Flash) and flash.write_stats is not None:
+                plan["write_stats"] = flash.write_stats
         elif args.action in ("erase", "program"):
+            backup_started = time.monotonic()
             backup([(b, flash.read(b.address, b.size)) for b in backups])
+            backup_seconds = time.monotonic() - backup_started
             if args.action == "erase":
                 flash.erase(args.address, size)
+                if isinstance(flash, Flash):
+                    plan["erase_stats"] = {"backup_seconds": backup_seconds, **flash.erase_stats}
             else:
                 flash.program(args.address, data)
     plan["executed"] = True

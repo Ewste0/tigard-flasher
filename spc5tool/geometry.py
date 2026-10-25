@@ -149,3 +149,22 @@ def validate_program_range(chip, address, size):
                              "Use Install password for password slots; raw factory, lifecycle "
                              "and DCF programming is not supported.")
     return blocks
+
+
+def erase_groups(blocks):
+    """Batch selected MAIN blocks within one controller/region, never OTP.
+
+    C90LC UM1627 2.6.2 and C55 UM2636 2.7.2 permit combined main-array
+    selectors. Separate C90 modules execute sequentially; SHADOW remains alone.
+    The caller supplies reviewed whole-block descriptors from select_blocks().
+    """
+    groups = {}
+    for block in blocks:
+        if not block.writable or block.kind not in ("flash", "shadow"):
+            raise ValueError(f"{block.region} cannot be erased")
+        key = (block.controller, block.region,
+               block.address if block.kind == "shadow" else None)
+        groups.setdefault(key, []).append(block)
+    if not groups:
+        raise ValueError("erase needs at least one block")
+    return tuple(tuple(group) for group in groups.values())

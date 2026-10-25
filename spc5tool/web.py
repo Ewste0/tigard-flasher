@@ -21,7 +21,7 @@ from .errors import DriverError
 from .files import save_backup, sha256, write_new
 from .images import decode_image, MAX_IMAGE, MAX_UPLOAD, SREC_SUFFIXES
 from .flash import Flash
-from .geometry import Block, backup_blocks, blocks_for, select_blocks, validate_program_range
+from .geometry import Block, backup_blocks, blocks_for, select_blocks, validate_program_range, erase_groups
 from .idcode import read_idcode
 from .mpsse import DEFAULT_URL, DEFAULT_FREQUENCY, MpsseTransport
 from .session import TargetSession
@@ -340,6 +340,11 @@ class Workspace:
             plan["notes"].append("Backup covers only the affected OTP units; unrelated factory ECC tests and password slots are not read.")
         if any(b.kind == "shadow" for b in blocks):
             plan["notes"].append("SHADOW erase preserves the configuration tail at +0x3DD0. Writing validates the censorship words before erasing.")
+        if target in chips.CHIPS and action == "erase":
+            plan["erase_batches"] = len(erase_groups(blocks))
+            plan["notes"].append(f"{len(blocks)} selected blocks in {plan['erase_batches']} controller erase operation(s), followed by a full blank check. Backup completes first.")
+        if action == "write" and target in chips.CHIPS and all(b.kind == "flash" for b in blocks):
+            plan["notes"].append("Back up every affected block, erase changed blocks together, then program and verify complete rebuilt blocks. Unchanged blocks are preserved and verified.")
         if action == "install_password":
             plan["notes"].append("Installs the password only; existing censorship, lifecycle and DCF settings are preserved. This does not enable protection on an unprotected chip.")
         if "login" in secret and chips.CHIPS[target].password_protocol == "jtag256":
@@ -511,8 +516,8 @@ class Workspace:
                         flash.verify(plan["address"], b"\xff" * plan["length"])
                         result["message"] = "Blank check passed. Every byte in the selected range is FF."
                     elif action == "write":
-                        if isinstance(flash, Flash) and flash.bulk_program and plan.get("fast_read"):
-                            self._log(job, "CFLASH Write: backup, erase with blank check, program, then one full-block verification. A separate Erase is unnecessary.")
+                        if isinstance(flash, Flash) and all(b["kind"] == "flash" for b in plan["blocks"]):
+                            self._log(job, "Write: backup, grouped erase with blank check, program, then one full-block verification. A separate Erase is unnecessary.")
                         flash.patch(plan["address"], data, backup)
                         if isinstance(flash, Flash) and flash.write_stats is not None:
                             result["write_stats"] = {k: round(v, 3) if isinstance(v, float) else v
@@ -522,7 +527,8 @@ class Workspace:
                                       f"erase + blank check {stats['erase_blank_seconds']:.2f} s; "
                                       f"program {stats['program_seconds']:.2f} s; "
                                       f"verify {stats['verify_seconds']:.2f} s. "
-                                      f"Blocks changed: {stats['changed_blocks']}; unchanged: {stats['unchanged_blocks']}.")
+                                      f"Blocks changed: {stats['changed_blocks']}; unchanged: {stats['unchanged_blocks']}; "
+                                      f"erase operations: {stats['erase_batches']}.")
                         result["message"] = "Write verified. Bytes outside the image were preserved."
                     elif action == "program":
                         blocks = [Block(**b) for b in plan["backup_ranges"]]
@@ -546,6 +552,7 @@ class Workspace:
                     elif action == "erase":
                         blocks = [Block(**b) for b in plan["blocks"]]
                         originals = []
+                        backup_started = time.monotonic()
                         for index, b in enumerate(blocks):
                             if isinstance(flash, Flash):
                                 with flash.stage("backup", 0.2 * index / len(blocks), 0.2 * (index + 1) / len(blocks)):
@@ -554,9 +561,18 @@ class Workspace:
                                 originals.append((b, flash.read(b.address, b.size)))
                                 progress("backup", 0.2 * (index + 1) / len(blocks), 1)
                         backup(originals)
+                        backup_seconds = time.monotonic() - backup_started
                         if isinstance(flash, Flash):
+                            self._log(job, f"Backup took {backup_seconds:.2f} s. Erasing {len(blocks)} blocks in {plan['erase_batches']} controller operation(s).")
                             with flash.stage("erase", 0.2, 1):
                                 flash.erase(plan["address"], plan["length"])
+                            stats = {"backup_seconds": backup_seconds, **flash.erase_stats}
+                            result["erase_stats"] = {k: round(v, 3) if isinstance(v, float) else v
+                                                     for k, v in stats.items()}
+                            self._log(job, f"Erase timing: backup {backup_seconds:.2f} s; "
+                                      f"controller erase {stats['erase_seconds']:.2f} s; "
+                                      f"blank check {stats['blank_check_seconds']:.2f} s. "
+                                      f"Blocks: {stats['blocks']}; erase operations: {stats['batches']}.")
                         else:
                             progress("erase and blank check", 0.2, 1)
                             flash.erase(plan["address"], plan["length"])

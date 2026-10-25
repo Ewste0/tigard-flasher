@@ -246,6 +246,20 @@ class WebTests(unittest.TestCase):
         self.assertIn('backup', job['result'])
         self.assertIn("finished", job)
 
+    def test_grouped_erase_reports_separate_timings_and_preserves_backup(self):
+        request = self.payload('spc5748g', 'erase', address=0xFA8000, length=0x8000)
+        status, plan = self.call('/api/plan', request)
+        self.assertEqual(status, 200, plan)
+        self.assertEqual(plan['erase_batches'], 1)
+        self.assertEqual(len(plan['blocks']), 2)
+        job = self.complete(request)
+        self.assertEqual(job['status'], 'complete', job)
+        stats = job['result']['erase_stats']
+        self.assertEqual((stats['blocks'], stats['batches']), (2, 1))
+        for name in ('backup_seconds', 'erase_seconds', 'blank_check_seconds'):
+            self.assertGreaterEqual(stats[name], 0)
+        self.assertIn('backup', job['result'])
+
     def test_upload_preview_and_exact_download(self):
         data = bytes(range(256)) * 3
         _, image = self.call("/api/files?name=sample.bin", data, raw=True)
@@ -403,10 +417,10 @@ class WebTests(unittest.TestCase):
         from spc5tool.flash import Flash
         entered, release = threading.Event(), threading.Event()
         original_wait = Flash._wait_done
-        def waiting(flash, base):
+        def waiting(flash, base, timeout=None):
             entered.set()
             release.wait(5)
-            return original_wait(flash, base)
+            return original_wait(flash, base, timeout)
         workspace = self.server.workspace
         with patch.object(Flash, '_wait_done', waiting):
             plan = workspace.plan(self.payload('spc5748g', action='erase', address=0xFA8000, length=0x4000))
