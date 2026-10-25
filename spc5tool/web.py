@@ -15,6 +15,8 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 from . import chips
+from .adapters import discover_tigards
+from .usb_backend import usb_error_message
 from .errors import DriverError
 from .files import save_backup, sha256, write_new
 from .flash import Flash
@@ -101,7 +103,11 @@ class Workspace:
         self._plan_secrets = {}
         self.lock = threading.RLock()
         self.active = None
-        self.adapter_status = {"connected": False, "devices": [], "message": "Not checked"}
+        self.adapter_selection = None  # Automatic; an explicit UI choice stays pinned.
+        self.adapter_revision = 0
+        self._adapter_identity = None
+        self.adapter_status = {"connected": False, "devices": [], "message": "Not checked",
+                               "selected_url": None, "selection": None, "revision": 0}
 
     def adapter(self):
         if not self.allow_hardware:
@@ -109,23 +115,53 @@ class Workspace:
         with self.lock:
             if self.active:
                 return self.adapter_status
-            # Enumerate USB descriptors only. No interface is claimed, and no
-            # JTAG clock or reset is driven by the connection indicator.
             try:
-                from pyftdi.ftdi import Ftdi
-                from pyftdi.usbtools import UsbTools
-                UsbTools.flush_cache()
-                devices = [{"serial": d.sn, "description": d.description, "interface": interface}
-                           for d, interface in Ftdi.list_devices(self.url)]
+                devices = discover_tigards()
             except Exception as exc:
-                # A serial-specific URL raises UsbToolsError when unplugged.
-                # Report transport/import/permission failures to the UI as well.
-                self.adapter_status = {"connected": False, "devices": [],
-                                       "message": f"Tigard unavailable: {exc}"}
-                return self.adapter_status
-            self.adapter_status = {"connected": bool(devices), "devices": devices,
-                                   "message": "USB adapter detected" if devices else "Tigard not found on USB"}
-            return self.adapter_status
+                return self._select_detected([], f"Tigard unavailable: {usb_error_message(exc)}")
+            return self._select_detected(devices)
+
+    def _select_detected(self, devices, error=None):
+        available = [device for device in devices if device["url"]]
+        preferred = self.adapter_selection or self.url
+        selected = next((device for device in available if device["url"] == preferred), None)
+        if not selected and self.adapter_selection is None and len(devices) == 1 and available:
+            selected = available[0]
+        identity = ((selected["url"], selected["bus"], selected["address"])
+                    if selected else None)
+        if identity != self._adapter_identity:
+            self.adapter_revision += 1
+            self._adapter_identity = identity
+            self.plans.clear()
+            self._plan_secrets.clear()
+        if selected:
+            self.url = selected["url"]
+            message = f"USB detected · {selected['serial']}"
+        elif error:
+            message = error
+        elif self.adapter_selection:
+            message = "Selected Tigard is disconnected. Choose a connected adapter in Connection settings."
+        elif not devices:
+            message = "Tigard not found on USB. Connect an adapter; detection is automatic."
+        elif not available:
+            message = "Tigard serial is missing or duplicated; a unique USB serial is required."
+        else:
+            message = "Multiple Tigards detected. Choose an adapter in Connection settings."
+        self.adapter_status = {"connected": selected is not None, "devices": devices,
+                               "message": message, "selected_url": selected["url"] if selected else None,
+                               "selection": self.adapter_selection, "revision": self.adapter_revision}
+        return self.adapter_status
+
+    def select_adapter(self, url):
+        with self.lock:
+            if self.active:
+                raise ValueError("cannot change the adapter while an operation is running")
+            state = self.adapter()
+            if url not in (None, "") and (not isinstance(url, str) or
+                    not any(device["url"] == url for device in state["devices"])):
+                raise ValueError("choose a connected Tigard from the adapter list")
+            self.adapter_selection = url or None
+            return self._select_detected(state["devices"])
 
     def add_file(self, name, data, kind="image"):
         limit = MAX_IMAGE + 1024 * 1024 if kind == "backup" else MAX_IMAGE
@@ -279,6 +315,13 @@ class Workspace:
         if "login" in secret and chips.CHIPS[target].password_protocol == "jtag256":
             plan["notes"].append("MPC5748G first attempts to halt under reset. Customer Delivery passwords are checked against the installed slot while halted. Protected-target password entry may run firmware briefly and awaits bench validation.")
         with self.lock:
+            if self.active:
+                raise ValueError("an operation is already running")
+            adapter = self.adapter()
+            if "adapter_revision" in request and request["adapter_revision"] != adapter["revision"]:
+                raise ValueError("USB adapter changed; identify the target and review a new operation")
+            plan["adapter_url"] = adapter["selected_url"]
+            plan["adapter_revision"] = adapter["revision"]
             # Pending plans are small and disposable; one-use IDs prevent double submission.
             if len(self.plans) >= 100:
                 expired = next(iter(self.plans))
@@ -293,8 +336,11 @@ class Workspace:
         with self.lock:
             if self.active:
                 raise ValueError("an operation is already running")
+            adapter = self.adapter()
+            if not adapter["connected"]:
+                raise ValueError(adapter["message"])
             if plan_id not in self.plans:
-                raise ValueError("plan expired or already executed; review a new plan")
+                raise ValueError("plan expired, adapter changed or already executed; review a new plan")
             plan = self.plans.pop(plan_id)
             key = uuid.uuid4().hex
             job = {"id": key, "plan": plan, "status": "running", "phase": "Opening session",
@@ -320,13 +366,13 @@ class Workspace:
     def _backend(self, plan, progress):
         target = plan["target"]
         if target in PARTS:
-            flash = SpiNor.open(PARTS[target], self.url, plan["frequency"])
+            flash = SpiNor.open(PARTS[target], plan["adapter_url"], plan["frequency"])
             try:
                 yield flash
             finally:
                 flash.close()
         else:
-            with TargetSession(chips.CHIPS[target], self.url, plan["frequency"], plan["expected_id"],
+            with TargetSession(chips.CHIPS[target], plan["adapter_url"], plan["frequency"], plan["expected_id"],
                                reset_pin=self.reset_pin, password=self._plan_secrets.get(plan["id"], {}).get("login"),
                                prepare_flash=plan["action"] != "authenticate",
                                fast_read=plan.get("fast_read", False), read_delay_us=plan.get("read_delay_us", 10)) as session:
@@ -366,13 +412,13 @@ class Workspace:
                 job["cancellable"] = False
 
         try:
-            self._log(job, "Opening Tigard channel B. MCU memory operations reset and halt the target.")
+            self._log(job, f"Opening Tigard channel B: {plan['adapter_url']}. MCU memory operations reset and halt the target.")
             if action == "identify":
                 if target in PARTS:
                     with self._backend(plan, progress) as flash:
                         result = {"message": "JEDEC " + flash.identify().hex().upper()}
                 else:
-                    with MpsseTransport.open(self.url, plan["frequency"], reset_pin=self.reset_pin) as transport:
+                    with MpsseTransport.open(plan["adapter_url"], plan["frequency"], reset_pin=self.reset_pin) as transport:
                         code = read_idcode(transport)
                         if not code.valid_ieee:
                             raise DriverError(str(code))
@@ -574,6 +620,8 @@ class Handler(BaseHTTPRequestHandler):
                         response = workspace.rename_file(request.get("file_id"), request.get("name"))
                     elif path == "/api/cancel":
                         response = workspace.cancel_job(request.get("job_id"))
+                    elif path == "/api/adapter":
+                        response = workspace.select_adapter(request.get("url"))
                     else:
                         self._send(404, {"error": "not found"})
                         return

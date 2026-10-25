@@ -68,19 +68,23 @@ python3 -m venv .venv
 .venv/bin/python launch.py
 ```
 
-On Windows use `py -3 -m venv .venv`, then `.venv\Scripts\python -m pip install -e .`
-and `.venv\Scripts\python launch.py`. The included `.command` and `.cmd` launchers
-use that virtual environment after installation. Launchers start in live hardware mode.
-No native signed application or Windows installer is supplied.
+On Windows 10/11 x64, double-click **Setup Windows.cmd**. It installs Python if
+needed through winget, creates the environment, installs dependencies and the
+Tigard USB driver with a Windows administrator prompt, then creates a desktop
+shortcut. See [Windows USB setup](docs/WINDOWS_USB.md), including the effect on
+Tigard COM ports. The included `.command` and `.cmd` launchers use the virtual
+environment. Launchers start in live hardware mode.
 
 The UI opens at `http://127.0.0.1:8765` and checks for Tigard on USB. No JTAG
 operation starts until requested. There is no simulation mode, demo generator,
 or fallback when hardware is missing. Node.js is needed only for UI development tests.
 Internet is needed for initial dependency installation; the installed app works offline.
 
-Hardware also requires libusb and host USB permissions. On macOS install
-`brew install libusb`. Follow the [pyftdi installation guide](https://eblot.github.io/pyftdi/installation.html)
-for Linux permissions and Windows driver setup. USB hardware has only been tested on macOS.
+The `libusb-package` dependency supplies a native USB library when system libusb
+is unavailable. A Windows USB device driver and Linux USB permissions are still
+required. On macOS, `brew install libusb` remains supported. Follow the
+[pyftdi installation guide](https://eblot.github.io/pyftdi/installation.html)
+for Linux permissions. USB hardware has only been tested on macOS.
 
 For a target using **Tigard TRST → RESET and SRST → JCOMP**:
 
@@ -90,8 +94,15 @@ For a target using **Tigard TRST → RESET and SRST → JCOMP**:
 
 The default `--reset-pin srst` instead maps SRST to RESET and TRST to JCOMP on
 the 14-pin profiles. Match [the wiring guide](docs/WIRING.md) before connecting.
-Choose a particular adapter with `--url ftdi://ftdi:2232h:SERIAL/2`. No developer
-adapter is hard-coded. USB presence does not mean the target is responding;
+The UI detects newly connected Tigards every three seconds while idle. Automatic
+selection keeps the current adapter when present, or selects the only connected
+Tigard. With several adapters, use **Connection settings → USB adapter**. An explicit
+selection stays pinned until you choose another adapter or Automatic. `--url
+ftdi://ftdi:2232h:SERIAL/2` sets the UI's initial preference; CLI operations use the
+specified URL directly. No developer adapter is hard-coded. Switching or unplugging
+an adapter clears pending reviews and the old target ID/password fields. Discovery
+does not claim interfaces or drive JTAG/reset; it pauses during hardware operations.
+USB presence does not mean the target is responding;
 use **Identify** to read its IDCODE, then select the actual chip profile.
 
 Memory operations reset and halt the MCU. The application does not resume it

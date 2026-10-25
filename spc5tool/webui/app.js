@@ -29,6 +29,8 @@ let frequency = 5000000, expectedId = "", pendingPlan = null, resetPin = "srst";
 let fastRead = true, readDelayUs = 10;
 let seenLogs = 0, eventCount = 0, toastTimer, previewSequence = 0;
 let activeJob = null, suggestedName = "";
+let adapterState = null, adapterChecking = false;
+let adapterRequest = 0, adapterSaving = false;
 let viewBytes = null, viewFileId = null, scrollFrame = null;
 const HEX_ROW_HEIGHT = 22;
 const hex = (n) => "0x" + Number(n).toString(16).toUpperCase().padStart(8, "0");
@@ -362,6 +364,7 @@ async function upload(input) {
 }
 function request(action) {
   return {target:target.key, action, mode, frequency, expected_id:expectedId || null,
+    ...(adapterState ? {adapter_revision:adapterState.revision} : {}),
     fast_read:fastRead && frequency >= 100000 && ["read", "write", "program", "erase", "verify", "blank"].includes(action) && target.key === "spc5748g" && document.querySelector('input[name="region"]:checked')?.value === "CFLASH",
     read_delay_us:readDelayUs,
     filename:$("saveName").value, password:target.password_login && action !== "identify" ? $("currentPassword").value : "",
@@ -375,7 +378,7 @@ async function operation(action) {
     if (action === "install_password") { $("newPassword").value = ""; $("confirmPassword").value = ""; }
     if (["write", "erase", "program", "install_password"].includes(action)) { review(plan); }
     else await run(plan);
-  } catch (error) { message(error); setBusy(false); }
+  } catch (error) { message(error); setBusy(false); checkAdapter(); }
 }
 function review(plan) {
   pendingPlan = plan;
@@ -383,7 +386,7 @@ function review(plan) {
   $("confirmMode").textContent = "TIGARD HARDWARE";
   $("confirmTitle").textContent = `Review ${plan.action}`;
   $("confirmText").textContent = "This operation changes the connected target. The MCU will be reset and halted.";
-  const values = [["Target", target.name], ["Start address", hex(plan.address)], ["Image / range", sizeText(plan.length)], ["Affected blocks", String(plan.blocks.length)], ["Backup size", sizeText(plan.backup_bytes)]];
+  const values = [["Target", target.name], ["Adapter", plan.adapter_url || "No adapter selected"], ["Start address", hex(plan.address)], ["Image / range", sizeText(plan.length)], ["Affected blocks", String(plan.blocks.length)], ["Backup size", sizeText(plan.backup_bytes)]];
   $("planDetails").replaceChildren(...values.map(([label, value]) => { const row = document.createElement("div"); const dt = document.createElement("dt"); dt.textContent = label; const dd = document.createElement("dd"); dd.textContent = value; row.append(dt, dd); return row; }));
   $("planNote").textContent = plan.action === "write" ? "Full affected blocks are backed up before erasing. Bytes outside the image are preserved. Written data is verified automatically." : "Selected blocks are backed up before erasing, then checked for blank bytes. The backup will be available to download.";
   if (["program", "install_password"].includes(plan.action)) $("planNote").textContent = plan.blocks.some(b => b.kind === "shadow") && plan.action === "install_password" ? "Back up SHADOW, preserve configuration, erase and rebuild it with the new password, then verify." : "Back up first, program erased ECC units, then verify. No erase is performed.";
@@ -399,7 +402,7 @@ async function run(plan) {
     let job = await api("/api/run", {plan_id:plan.id});
     await follow(job);
   } catch (error) { message(error); $("statusText").textContent = "Error"; $("jobDot").className = "ready-dot failed"; }
-  finally { setBusy(false); }
+  finally { setBusy(false); checkAdapter(); }
 }
 async function follow(job) {
   activeJob = job.id;
@@ -436,10 +439,12 @@ async function follow(job) {
   else log(`${job.plan.action.toUpperCase()} completed · hardware`, "OK");
 }
 function settings() {
+  renderAdapterOptions(false);
   $("frequencySelect").value = String(frequency); $("expectedId").value = expectedId;
   $("readModeSelect").value = fastRead ? "queued" : "checked";
   $("readDelayUs").value = readDelayUs;
   $("settingsDialog").showModal();
+  checkAdapter();
 }
 function modeDisplay() {
   $("modeBadge").replaceChildren(); $("modeBadge").append(document.createElement("i"), "Tigard hardware");
@@ -448,16 +453,43 @@ function modeDisplay() {
   $("clockValue").textContent = frequency >= 1000000 ? `${frequency / 1000000} MHz` : `${frequency / 1000} kHz`;
   $("connectionNote").textContent = "Connect a target before identifying. An attached adapter alone is not a ready JTAG target.";
 }
+function renderAdapterOptions(preserveChoice = true) {
+  const select = $("adapterSelect");
+  const choice = preserveChoice && $("settingsDialog").open ? select.value : adapterState?.selection || "";
+  const options = [new Option("Automatic · detect connected Tigard", "")];
+  for (const device of adapterState?.devices || []) {
+    if (device.url) options.push(new Option(`${device.description} · ${device.serial}`, device.url));
+  }
+  if (choice && !options.some(option => option.value === choice)) options.push(new Option(`${choice} · disconnected`, choice));
+  select.replaceChildren(...options);
+  select.value = choice;
+  $("adapterNote").textContent = adapterState?.message || "Checking USB adapters…";
+}
+function applyAdapterState(state) {
+  if (!adapterState || state.revision !== adapterState.revision) {
+    expectedId = ""; $("expectedId").value = "";
+    for (const id of ["currentPassword", "newPassword", "confirmPassword"]) $(id).value = "";
+    pendingPlan = null;
+    if ($("confirmDialog").open) $("confirmDialog").close("cancel");
+    $("targetState").textContent = "Not identified";
+    if (adapterState) log(`${state.message}. Identify the target again.`);
+  }
+  adapterState = state;
+  renderAdapterOptions();
+  $("adapterState").textContent = state.connected ? "Tigard connected" : state.devices.length ? "Select Tigard" : "Disconnected";
+  if (!state.connected) $("targetState").textContent = "Not connected";
+  $("connectionNote").textContent = state.connected ? `${state.message}. Identify checks the JTAG target; Read uses the selected range.` : state.message;
+}
 async function checkAdapter() {
-  if (mode !== "hardware" || busy || !ready) return;
+  if (mode !== "hardware" || busy || !ready || adapterChecking || adapterSaving) return;
+  adapterChecking = true;
+  const requestId = ++adapterRequest;
   try {
     const state = await api("/api/adapter");
-    if (mode !== "hardware" || busy) return;
-    $("adapterState").textContent = state.connected ? "Tigard connected" : "Disconnected";
-    if (!state.connected) $("targetState").textContent = "Not connected";
-    const serial = state.devices[0]?.serial;
-    $("connectionNote").textContent = state.connected ? `USB detected${serial ? " · " + serial : ""}. Identify checks the JTAG target; Read uses the selected range.` : state.message;
+    if (mode !== "hardware" || busy || requestId !== adapterRequest) return;
+    applyAdapterState(state);
   } catch (error) { if (!busy && mode === "hardware") { $("adapterState").textContent = "Check failed"; $("connectionNote").textContent = error.message; } }
+  finally { adapterChecking = false; }
 }
 for (const id of ["openButton", "emptyOpen"]) $(id).addEventListener("click", () => $("fileInput").click());
 $("fileInput").addEventListener("change", () => upload($("fileInput").files[0]));
@@ -493,16 +525,26 @@ $("wiringButton").addEventListener("click", () => tab("wiring"));
 for (const button of document.querySelectorAll("[data-operation]")) button.addEventListener("click", () => operation(button.dataset.operation));
 $("identifyButton").addEventListener("click", () => operation("identify"));
 $("settingsButton").addEventListener("click", settings);
-$("settingsForm").addEventListener("submit", event => {
+$("settingsForm").addEventListener("submit", async event => {
   if (event.submitter.value !== "save") return;
+  event.preventDefault();
+  if (adapterSaving) return;
   try {
-    const input = $("expectedId").value.trim(); if (input) number(input);
+    let input = $("expectedId").value.trim(); if (input) number(input);
     const delay = Number($("readDelayUs").value);
     if (!Number.isInteger(delay) || delay < 1 || delay > 1000) throw new Error("Read delay must be 1–1000 microseconds.");
+    if ($("adapterSelect").value !== (adapterState?.selection || "")) {
+      adapterSaving = true; ++adapterRequest;
+      const state = await api("/api/adapter", {url:$("adapterSelect").value || null});
+      if (state.revision !== adapterState?.revision) input = "";
+      applyAdapterState(state);
+    }
     frequency = Number($("frequencySelect").value); expectedId = input;
     fastRead = $("readModeSelect").value === "queued"; readDelayUs = delay;
+    $("settingsDialog").close("save");
     modeDisplay(); suggestFilename(); checkAdapter(); log(`Mode: ${mode}. Clock: ${frequency.toLocaleString()} Hz. No JTAG session opened.`);
-  } catch (error) { event.preventDefault(); message(error); }
+  } catch (error) { message(error); }
+  finally { adapterSaving = false; checkAdapter(); }
 });
 $("confirmDialog").addEventListener("close", () => {
   const plan = pendingPlan; pendingPlan = null;
@@ -547,7 +589,7 @@ async function initialize() {
     }
     controls();
     checkAdapter();
-    setInterval(checkAdapter, 10000);
+    setInterval(checkAdapter, 3000);
   } catch (error) { message(error); $("statusText").textContent = "Server unavailable"; }
 }
 initialize();

@@ -22,8 +22,18 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
       - run: python -m pip install -e .
+      - run: python -m spc5tool usb-check --backend-only
       - run: python -m unittest discover -s tests -v
       - run: python tools/check_release.py
+      - name: Windows application setup smoke test
+        if: runner.os == 'Windows' && matrix.python == '3.13'
+        shell: powershell
+        run: ./tools/windows/setup.ps1 -SkipDriver -NoLaunch
+      - name: Driver selection tests (no OS driver changes)
+        if: runner.os != 'Windows'
+        run: |
+          cc -I tests/windows/include tests/windows/driver_selection.c -o /tmp/tigard-driver-selection
+          /tmp/tigard-driver-selection
 
   browser:
     runs-on: ubuntu-24.04
@@ -51,8 +61,27 @@ jobs:
           name: browser-debug
           path: test-results/
 
+  windows-driver:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v6
+      - uses: microsoft/setup-msbuild@v2
+      - name: Parse setup script
+        shell: pwsh
+        run: |
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile("$pwd/tools/windows/setup.ps1", [ref]$null, [ref]$errors) | Out-Null
+          if ($errors) { throw ($errors | Out-String) }
+      - name: Build Tigard USB driver helper
+        shell: pwsh
+        run: ./tools/windows/build_driver.ps1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-usb-driver
+          path: driver-dist/
+
   package:
-    needs: [python, browser]
+    needs: [python, browser, windows-driver]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6

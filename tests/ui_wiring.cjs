@@ -16,7 +16,7 @@ async function main() {
     for (const reset of ["trst", "srst"]) {
       const mode = "hardware";
       const workspace = mkdtempSync(path.join(os.tmpdir(), "tigard-ui-"));
-      const server = spawn((process.env.PYTHON || path.join(root, ".venv/bin/python")), ["-m", "spc5tool", "gui", "--port", "0", "--workspace", workspace, "--reset-pin", reset,
+      const server = spawn((process.env.PYTHON || path.join(root, ".venv/bin/python")), ["-m", "tests.ui_server", "gui", "--port", "0", "--workspace", workspace, "--reset-pin", reset,
         ...(reset === "srst" ? ["--freq", "100000"] : [])], {cwd:root});
       let page;
       try {
@@ -33,9 +33,19 @@ async function main() {
         });
         page = await browser.newPage();
         // The hardware-mode visual case uses a descriptor fixture: no USB access.
+        const descriptor = serial => ({serial, description:"Tigard test fixture", interface:2, url:`ftdi://ftdi:2232h:${serial}/2`});
+        let usbState = {connected:true, devices:[descriptor("TEST-ONLY")], selected_url:descriptor("TEST-ONLY").url,
+          selection:null, revision:1, message:"USB detected · TEST-ONLY"};
         await page.setRequestInterception(true);
         page.on("request", request => {
-          if (request.url().endsWith("/api/adapter")) request.respond({status:200, contentType:"application/json", body:JSON.stringify({connected:true, devices:[{serial:"TEST-ONLY"}]})});
+          if (request.url().endsWith("/api/adapter")) {
+            if (request.method() === "POST") {
+              const selection = JSON.parse(request.postData()).url;
+              usbState = {...usbState, selection, selected_url:selection, connected:true,
+                revision:usbState.revision + 1, message:`USB detected · ${usbState.devices.find(d => d.url === selection).serial}`};
+            }
+            request.respond({status:200, contentType:"application/json", body:JSON.stringify(usbState)});
+          }
           else request.continue();
         });
         const errors = [];
@@ -167,6 +177,31 @@ async function main() {
         assert.equal(await page.$eval("#targetConnector", node => node.children.length), 8);
         assert.equal(await page.$$eval("#targetConnector .pin b", nodes => nodes.map(node => Number(node.textContent)).join()), "1,8,2,7,3,6,4,5");
         if (reset === "trst") await page.screenshot({path:path.join(screenshots,"spi-desktop.png"),fullPage:true});
+        // Hot-plug updates connection state without reloading or starting a job.
+        await page.evaluate(() => { expectedId = "0x1234501D"; $("currentPassword").value = "TEST-SECRET"; });
+        usbState = {...usbState, connected:false, devices:[], selected_url:null, revision:2, message:"Tigard not found on USB"};
+        await page.evaluate(() => checkAdapter());
+        assert.equal(await page.$eval("#adapterState", node => node.textContent), "Disconnected");
+        assert.equal(await page.evaluate(() => expectedId), "");
+        assert.equal(await page.$eval("#currentPassword", node => node.value), "");
+        usbState = {...usbState, connected:true, devices:[descriptor("NEW-TIGARD")], selected_url:descriptor("NEW-TIGARD").url,
+          revision:3, message:"USB detected · NEW-TIGARD"};
+        // Wait for the actual idle poll, rather than calling it for reconnect.
+        await page.waitForFunction(() => document.getElementById("connectionNote").textContent.includes("NEW-TIGARD"), {timeout:7000});
+        await page.click("#settingsButton");
+        assert.equal(await page.$eval("#adapterSelect", node => node.options.length), 2);
+        usbState = {...usbState, devices:[descriptor("NEW-TIGARD"), descriptor("SECOND-TIGARD")]};
+        await page.evaluate(() => checkAdapter());
+        await page.waitForFunction(() => document.getElementById("adapterSelect").options.length === 3);
+        await page.select("#adapterSelect", descriptor("SECOND-TIGARD").url);
+        await page.click('#settingsDialog button[value="save"]');
+        await page.waitForFunction(() => !document.getElementById("settingsDialog").open);
+        await page.waitForFunction(() => document.getElementById("connectionNote").textContent.includes("SECOND-TIGARD"));
+        assert.equal(usbState.selection, descriptor("SECOND-TIGARD").url);
+        await page.click("#settingsButton");
+        assert.equal(await page.$eval("#adapterSelect", node => node.value), descriptor("SECOND-TIGARD").url);
+        if (reset === "srst") await page.screenshot({path:path.join(screenshots,"adapter-settings.png"),fullPage:true});
+        await page.click('#settingsDialog button[value="cancel"]');
         const state = await page.evaluate(async () => (await fetch("/api/status")).json());
         assert.equal(state.hardware_enabled, mode === "hardware");
         assert.equal(state.jobs.length, 0);

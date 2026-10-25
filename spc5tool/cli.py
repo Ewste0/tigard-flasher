@@ -75,6 +75,24 @@ def _info(args):
     return 0
 
 
+def _usb_check(args):
+    from .adapters import discover_tigards
+    from .usb_backend import configure_usb, usb_error_message
+    try:
+        configure_usb()
+        from pyftdi.usbtools import UsbTools
+        backend = UsbTools.find_backend()
+        print(f"USB library loaded: {type(backend).__module__}")
+        if args.backend_only:
+            return 0
+        devices = discover_tigards()
+    except (ImportError, ValueError, OSError) as exc:
+        raise DriverError(usb_error_message(exc)) from exc
+    emit(devices)
+    print("USB descriptors only; no JTAG/reset or MCU memory access.")
+    return 0 if devices else 1
+
+
 @contextmanager
 def backend(args):
     if args.spi:
@@ -287,6 +305,9 @@ def _commands(sub, spi=False):
 def build_parser():
     parser = argparse.ArgumentParser(prog="spc5tool", description=__doc__)
     sub = parser.add_subparsers(required=True)
+    usb = sub.add_parser("usb-check", help="check USB library and Tigard descriptors without JTAG/reset")
+    usb.add_argument("--backend-only", action="store_true", help="load the USB library without enumerating devices")
+    usb.set_defaults(func=_usb_check)
     gui = sub.add_parser("gui", help="open the local flasher UI for live Tigard hardware")
     gui.add_argument("--port", type=int, default=8765)
     gui.add_argument("--workspace", type=Path, default=Path(".spc5tool-ui"))

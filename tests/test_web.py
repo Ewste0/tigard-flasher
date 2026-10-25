@@ -13,11 +13,14 @@ from pathlib import Path
 from unittest.mock import patch
 
 from spc5tool.web import Workspace, make_server
-from tests.backends import workspace_backend
+from tests.backends import workspace_backend, tigard_descriptor
 
 
 class WebTests(unittest.TestCase):
     def setUp(self):
+        discovery = patch("spc5tool.web.discover_tigards", return_value=[tigard_descriptor()])
+        self.discovery = discovery.start()
+        self.addCleanup(discovery.stop)
         backend = patch.object(Workspace, "_backend", workspace_backend)
         backend.start()
         self.addCleanup(backend.stop)
@@ -28,7 +31,7 @@ class WebTests(unittest.TestCase):
         self.url = f"http://127.0.0.1:{self.server.server_address[1]}"
         self.usb = patch("spc5tool.web.MpsseTransport.open", side_effect=AssertionError("USB must not open"))
         self.spi = patch("spc5tool.web.SpiNor.open", side_effect=AssertionError("USB must not open"))
-        self.usb.start()
+        self.usb_open = self.usb.start()
         self.spi.start()
 
     def tearDown(self):
@@ -381,16 +384,96 @@ class WebTests(unittest.TestCase):
         from types import SimpleNamespace, ModuleType
         from unittest.mock import Mock
         modules = {name: ModuleType(name) for name in ('pyftdi', 'pyftdi.ftdi', 'pyftdi.usbtools')}
-        listing = Mock(return_value=[(SimpleNamespace(sn='TEST123', description='Tigard'), 2)])
+        from spc5tool.adapters import discover_tigards
+        from spc5tool.mpsse import DEFAULT_URL
+        listing = Mock(return_value=[(SimpleNamespace(sn='TEST123', description='Tigard', bus=1, address=1), 2)])
         modules['pyftdi.ftdi'].Ftdi = SimpleNamespace(list_devices=listing)
-        modules['pyftdi.usbtools'].UsbTools = Mock()
-        with patch.dict('sys.modules', modules):
+        modules['pyftdi.usbtools'].UsbTools = Mock(BACKENDS=("usb.backend.libusb1", "usb.backend.libusb0"))
+        with patch.dict('sys.modules', modules), patch('spc5tool.web.discover_tigards', discover_tigards):
             code, adapter = self.call('/api/adapter')
         self.assertEqual(code, 200)
         self.assertTrue(adapter['connected'])
         self.assertEqual(adapter['devices'][0]['serial'], 'TEST123')
-        listing.assert_called_once_with(self.server.workspace.url)
+        listing.assert_called_once_with(DEFAULT_URL)
         self.assertEqual(self.server.workspace.jobs, {})
+
+    def test_adapter_replacement_invalidates_review_and_secret_before_run(self):
+        workspace = self.server.workspace
+        workspace.url = 'ftdi://ftdi:2232h:OLD/2'
+        _, state = self.call('/api/adapter')
+        self.assertEqual(state['selected_url'], tigard_descriptor()['url'])
+        _, plan = self.call('/api/plan', self.payload(action='authenticate', password='123456789ABCDEF0'))
+        self.assertIn(plan['id'], workspace._plan_secrets)
+        self.discovery.return_value = [tigard_descriptor('NEW')]
+        code, error = self.call('/api/run', {'plan_id': plan['id']})
+        self.assertEqual(code, 400)
+        self.assertIn('adapter changed', error['error'])
+        self.assertFalse(workspace._plan_secrets)
+        self.assertFalse(workspace.jobs)
+        self.usb_open.assert_not_called()
+        code, error = self.call('/api/plan', self.payload(adapter_revision=state['revision']))
+        self.assertEqual(code, 400)
+        self.assertIn('adapter changed', error['error'])
+
+    def test_disconnection_and_usb_reenumeration_require_new_plan(self):
+        workspace = self.server.workspace
+        for devices in ([], [tigard_descriptor(address=2)]):
+            self.discovery.return_value = [tigard_descriptor()]
+            plan = workspace.plan(self.payload())
+            self.discovery.return_value = devices
+            with self.assertRaises(ValueError):
+                workspace.start(plan['id'])
+            self.assertFalse(workspace.jobs)
+            self.assertNotIn(plan['id'], workspace.plans)
+        self.discovery.side_effect = OSError('USB permission denied')
+        state = workspace.adapter()
+        self.assertFalse(state['connected'])
+        self.assertIn('USB permission denied', state['message'])
+
+    def test_multiple_tigards_explicit_selection_and_sticky_disconnect(self):
+        first, second = tigard_descriptor('FIRST'), tigard_descriptor('SECOND', address=2)
+        self.discovery.return_value = [first, second]
+        _, state = self.call('/api/adapter')
+        self.assertFalse(state['connected'])
+        self.assertIn('Multiple', state['message'])
+        self.assertEqual(self.call('/api/adapter', {'url':'ftdi://ftdi:2232h:UNKNOWN/2'})[0], 400)
+        code, state = self.call('/api/adapter', {'url':second['url']})
+        self.assertEqual(code, 200)
+        self.assertEqual(state['selected_url'], second['url'])
+        self.discovery.return_value = [first]
+        _, state = self.call('/api/adapter')
+        self.assertFalse(state['connected'])
+        self.assertEqual(state['selection'], second['url'])
+        _, state = self.call('/api/adapter', {'url':None})
+        self.assertEqual(state['selected_url'], first['url'])
+        # Plugging a second adapter in does not replace the current automatic choice.
+        self.discovery.return_value = [second, first]
+        self.assertEqual(self.call('/api/adapter')[1]['selected_url'], first['url'])
+
+    def test_active_job_keeps_its_adapter_and_does_not_enumerate(self):
+        workspace = self.server.workspace
+        entered, release = threading.Event(), threading.Event()
+        original = workspace._run
+        def blocked(job):
+            entered.set()
+            release.wait(5)
+            original(job)
+        plan = workspace.plan(self.payload())
+        with patch.object(workspace, '_run', blocked):
+            job = workspace.start(plan['id'])
+            self.assertTrue(entered.wait(2))
+            try:
+                self.discovery.reset_mock()
+                self.discovery.return_value = [tigard_descriptor('OTHER')]
+                self.assertEqual(workspace.adapter()['selected_url'], plan['adapter_url'])
+                self.assertEqual(self.call('/api/adapter', {'url':None})[0], 400)
+                self.discovery.assert_not_called()
+            finally:
+                release.set()
+            deadline = time.monotonic() + 5
+            while workspace.active and time.monotonic() < deadline:
+                time.sleep(0.01)
+        self.assertEqual(workspace.snapshot(job['id'])['plan']['adapter_url'], tigard_descriptor()['url'])
 
 
 if __name__ == "__main__":

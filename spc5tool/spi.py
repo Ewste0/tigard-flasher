@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from .errors import DriverError, OperationTimeout, VerificationError
 from .geometry import checked_range
 from .mpsse import DEFAULT_URL, DEFAULT_FREQUENCY
+from .usb_backend import configure_usb, usb_error_message
 
 
 @dataclass(frozen=True)
@@ -39,6 +40,7 @@ class SpiNor:
             from pyftdi.spi import SpiController
         except ImportError as exc:
             raise DriverError("install pyftdi to access Tigard hardware") from exc
+        configure_usb()
         controller = SpiController(cs_count=1)
         try:
             controller.configure(url)
@@ -50,7 +52,7 @@ class SpiNor:
             controller.terminate()
             if isinstance(exc, DriverError):
                 raise
-            raise DriverError(f"cannot open Tigard SPI {url}: {exc}") from exc
+            raise DriverError(f"cannot open Tigard SPI {url}: {usb_error_message(exc)}") from exc
         except BaseException:
             controller.terminate()
             raise

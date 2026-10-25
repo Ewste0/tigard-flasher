@@ -9,6 +9,11 @@ from spc5tool.spi import PARTS, SpiNor
 from tests.simulator import SimMemory, SimSpiPort
 
 
+def tigard_descriptor(serial="TEST123", address=1):
+    return {"serial": serial, "description": "Tigard test fixture", "interface": 2,
+            "url": f"ftdi://ftdi:2232h:{serial}/2", "bus": 1, "address": address}
+
+
 @contextmanager
 def flash_model(target, path, progress=None):
     path = Path(path)

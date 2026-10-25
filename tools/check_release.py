@@ -12,6 +12,7 @@ DIRECTORIES = {"spc5tool", "tests", "docs", "tools", ".github"}
 FILES = {"README.md", "LICENSE", "THIRD_PARTY_NOTICES.md", "CHANGELOG.md",
          "CONTRIBUTING.md", "SECURITY.md", "pyproject.toml", "MANIFEST.in",
          "launch.py", "Start Tigard Flasher.command", "Start Tigard Flasher.cmd",
+         "Setup Windows.cmd",
          "package.json", "package-lock.json", ".gitignore", ".gitattributes"}
 PRIVATE_SUFFIXES = {".bin", ".hex", ".s19", ".srec", ".pcp", ".exe", ".elf",
                     ".zip", ".log", ".pem", ".key", ".pyc"}

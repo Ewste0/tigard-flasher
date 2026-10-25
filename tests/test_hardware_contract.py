@@ -19,7 +19,7 @@ class HardwareContractTests(unittest.TestCase):
         ftdi.Ftdi = Mock()
         spi.SpiController = Mock()
         usbtools = types.ModuleType('pyftdi.usbtools')
-        usbtools.UsbTools = Mock()
+        usbtools.UsbTools = Mock(BACKENDS=("usb.backend.libusb1", "usb.backend.libusb0"))
         return {'pyftdi': parent, 'pyftdi.ftdi': ftdi, 'pyftdi.spi': spi,
                 'pyftdi.usbtools': usbtools}, ftdi.Ftdi, spi.SpiController
 

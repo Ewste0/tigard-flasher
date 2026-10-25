@@ -18,6 +18,8 @@ research/
 demo-output/
 test-results/
 .venv*/
+.setup/
+driver-dist/
 venv/
 __pycache__/
 *.py[cod]

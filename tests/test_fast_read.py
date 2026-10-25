@@ -229,7 +229,8 @@ class FastReadTests(unittest.TestCase):
                 backend.assert_called_once_with(args)
                 self.assertEqual(getattr(args, 'fast_read', False), expected)
 
-    def test_api_auto_default_only_for_eligible_reads(self):
+    @patch('spc5tool.web.discover_tigards', return_value=[])
+    def test_api_auto_default_only_for_eligible_reads(self, discovery):
         with tempfile.TemporaryDirectory() as directory:
             workspace = Workspace(directory)
             request = dict(target='spc5748g', action='read', mode='hardware', address=0xFA8000, length=256)
@@ -245,7 +246,8 @@ class FastReadTests(unittest.TestCase):
                 plan = workspace.plan({**request, 'action': action, 'length': 0x4000, 'file_id': image['id'], 'expected_id': 0x0988101D})
                 self.assertTrue(plan['fast_read'], action)
 
-    def test_api_limits_queue_to_cflash_read(self):
+    @patch('spc5tool.web.discover_tigards', return_value=[])
+    def test_api_limits_queue_to_cflash_read(self, discovery):
         with tempfile.TemporaryDirectory() as directory:
             workspace = Workspace(directory)
             request = dict(target='spc5748g', action='read', mode='hardware',

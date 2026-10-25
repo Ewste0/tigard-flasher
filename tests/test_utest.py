@@ -97,7 +97,10 @@ class UtestTests(unittest.TestCase):
             self.assertEqual(fresh.regions[0x400000], before)
             self.assertFalse(any(a == chip.flash_ctrl["FMC"] and v & 1 for a, v in fresh.log))
 
-    def test_web_program_and_password_backups_use_actual_spans(self):
+    @patch('spc5tool.web.discover_tigards')
+    def test_web_program_and_password_backups_use_actual_spans(self, discovery):
+        from tests.backends import tigard_descriptor
+        discovery.return_value = [tigard_descriptor()]
         for action, address, size in (("program", 0x401000, 16), ("install_password", 0x400120, 32)):
             with self.subTest(action=action), tempfile.TemporaryDirectory() as directory:
                 workspace = Workspace(directory)

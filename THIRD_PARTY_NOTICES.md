@@ -15,5 +15,12 @@ is not vendored here. Tigard, NXP, STMicroelectronics, P&E Micro, and
 Winbond names identify products or compatibility targets. This project is
 independent and is not endorsed by those companies or projects.
 
+`libusb-package` (Apache-2.0) installs libusb (LGPL-2.1-or-later) separately as a
+runtime dependency. The separate Windows USB helper links libwdi
+(LGPL-3.0-or-later) and embeds upstream libusb-win32/libusbK driver components.
+It is distributed with libwdi source/license notices and a build recipe. See
+[Windows USB setup](docs/WINDOWS_USB.md) for exact versions and corresponding
+source links. These binaries are not included in the Python wheel or Git tree.
+
 No proprietary flasher executable, programming algorithm binary, PCP file,
 customer firmware, adapter serial number, or hardware dump is distributed.

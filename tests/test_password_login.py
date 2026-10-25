@@ -230,7 +230,10 @@ class PasswordLoginTests(unittest.TestCase):
             memory.return_value.read32.assert_called_once_with(0xFFFF4000)
             memory.return_value.write32.assert_not_called()
 
-    def test_web_and_cli_report_matching_stored_password_and_keep_secrets_private(self):
+    @patch('spc5tool.web.discover_tigards')
+    def test_web_and_cli_report_matching_stored_password_and_keep_secrets_private(self, discovery):
+        from tests.backends import tigard_descriptor
+        discovery.return_value = [tigard_descriptor()]
         memory = Mock()
         memory.read32.return_value = 0xA0000003
         memory.read.return_value = PASSWORD

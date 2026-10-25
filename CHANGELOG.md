@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.7.2 — 2026-10-25
+
+- Detect newly connected Tigards every three seconds while the UI is idle.
+  Select the only connected adapter automatically, with a connection-settings
+  selector for multiple adapters and an explicit choice that stays pinned.
+- Bind each operation review to its adapter. Disconnects, USB re-enumeration,
+  and adapter changes invalidate pending plans and discard their passwords;
+  the UI clears the previous target ID/password fields. Running operations
+  keep their serial-specific connection and are never redirected.
+- Test discovery filtering, reconnects, multiple adapters, stale reviews,
+  active-operation isolation, and browser updates without physical USB access.
+- Load the libusb-package native library when system libusb is unavailable;
+  explain missing USB backends separately from target communication failures.
+- Add Windows x64 setup for Python, dependencies, desktop shortcut and the
+  Tigard libusb-win32 driver, plus a USB-only diagnostic command. Build the
+  narrow driver helper from pinned upstream inputs; Windows hardware validation
+  remains pending.
+
 ## 0.7.1 — 2026-10-22
 
 - Reduce MPC5748 queued Write from five read passes per changed block to three:

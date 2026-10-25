@@ -34,6 +34,7 @@ is what actually gets validated.
 from __future__ import annotations
 import math
 from .errors import DriverError
+from .usb_backend import configure_usb, usb_error_message
 
 # --- MPSSE opcodes ---
 CLK_DIV5_DISABLE = 0x8A
@@ -99,6 +100,7 @@ class MpsseTransport:
             ) from exc
         # Re-enumerate between sessions: a GUI can outlive a USB reconnect or
         # another process opening the adapter. Do not reuse stale descriptors.
+        configure_usb()
         UsbTools.flush_cache()
         ftdi = Ftdi()
         # open_mpsse_from_url sends 0x8A/0x8D/0x97, sets frequency, and applies the
@@ -109,7 +111,7 @@ class MpsseTransport:
             )
         except Exception as exc:
             ftdi.close()
-            raise MpsseError(f"cannot open Tigard {url}: {exc}") from exc
+            raise MpsseError(f"cannot open Tigard {url}: {usb_error_message(exc)}") from exc
         return cls(_PyftdiIO(ftdi), low_value=IDLE_LOW, reset_pin=reset_pin)
 
     def close(self):
