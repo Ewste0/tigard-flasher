@@ -2,8 +2,8 @@
 param([string]$Output = "driver-dist")
 $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
-$work = Join-Path $env:RUNNER_TEMP 'tigard-driver-build'
-if (-not $env:RUNNER_TEMP) { $work = Join-Path $env:TEMP ('tigard-driver-build-' + [guid]::NewGuid()) }
+if ($env:RUNNER_TEMP) { $work = Join-Path $env:RUNNER_TEMP 'tigard-driver-build' }
+else { $work = Join-Path $env:TEMP ('tigard-driver-build-' + [guid]::NewGuid()) }
 New-Item -ItemType Directory -Force $work, $Output | Out-Null
 function Fetch($url, $name, $sha) {
     $path = Join-Path $work $name
@@ -29,7 +29,7 @@ $config = $config -replace '(?m)^#define WDK_DIR .*$', '// No WinUSB coinstaller
 $config = $config -replace '(?m)^#define LIBUSB0_DIR .*$', ('#define LIBUSB0_DIR "' + $zeroDir + '"')
 $config = $config -replace '(?m)^#define LIBUSBK_DIR .*$', ('#define LIBUSBK_DIR "' + $kDir + '"')
 $config = $config -replace '(?m)^#define OPT_ARM.*$', '// This installer build targets x86/x64'
-$config = $config -replace '#define WDF_VER 1011', '#define WDF_VER 1009'
+$config = $config -replace '#define WDF_VER 1011', '#define WDF_VER 01009'
 Set-Content "$src/msvc/config.h" $config -Encoding utf8
 # Remove the ARM64 build dependency; the x86 helper embeds x64 installer support.
 $proj = "$src/libwdi/.msvc/libwdi_static.vcxproj"
