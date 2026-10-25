@@ -125,3 +125,27 @@ def select_blocks(chip, address, size, *, whole=False):
     if whole and (selected[0].address != address or selected[-1].end != address + size):
         raise ValueError("erase range must contain whole blocks (use 'plan' to see boundaries)")
     return selected
+
+
+def validate_program_range(chip, address, size):
+    """Validate ordinary Program before USB access, including customer OTP bounds.
+
+    A blank UTEST cell is not permission to change a reserved, lifecycle or DCF
+    field. Password installation uses an independently validated exact slot.
+    This restriction does not reduce the physical map used for explicit reads.
+    """
+    blocks = select_blocks(chip, address, size)
+    unit = chip.program_unit
+    if address % unit or size % unit:
+        raise ValueError(f"Program requires complete aligned {unit}-byte ECC units")
+    for region in chip.regions:
+        lo, hi = max(address, region.base), min(address + size, region.base + region.size)
+        if lo >= hi or region.program_ranges is None:
+            continue
+        if not any(start <= lo and hi <= start + count for start, count in region.program_ranges):
+            ranges = ", ".join(f"0x{start:08X}–0x{start + count - 1:08X}"
+                               for start, count in region.program_ranges)
+            raise ValueError(f"{region.name} Program is limited to customer OTP {ranges}. "
+                             "Use Install password for password slots; raw factory, lifecycle "
+                             "and DCF programming is not supported.")
+    return blocks

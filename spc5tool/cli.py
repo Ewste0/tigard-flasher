@@ -12,7 +12,7 @@ from .errors import DriverError
 from .files import save_backup, write_new, sha256
 from .images import decode_image, MAX_UPLOAD, SREC_SUFFIXES
 from .flash import Flash
-from .geometry import Block, backup_blocks, blocks_for, select_blocks
+from .geometry import Block, backup_blocks, blocks_for, select_blocks, validate_program_range
 from .idcode import read_idcode
 from .mpsse import MpsseTransport, DEFAULT_URL, DEFAULT_FREQUENCY
 from .session import TargetSession
@@ -139,9 +139,8 @@ def _operation(args):
         Flash._check_blocks(blocks, erase=args.action == "erase")
         if args.action == "write" and any(b.kind == "otp" for b in blocks):
             raise ValueError("OTP requires program, not erase/preserve/write")
-        unit = chips.get(args.chip).program_unit
-        if args.action == "program" and (args.address % unit or size % unit):
-            raise ValueError(f"MCU program requires complete aligned {unit}-byte ECC units")
+        if args.action == "program":
+            validate_program_range(chips.get(args.chip), args.address, size)
     backups = (backup_blocks(chips.get(args.chip), args.address, size)
                if not args.spi and args.action == "program" else blocks)
     plan = {"target": args.chip, "operation": args.action, "address": f"0x{args.address:08x}",

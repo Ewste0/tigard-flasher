@@ -1,5 +1,29 @@
 # Local release checks
 
+## 0.7.6 — 2026-10-25
+
+Checked on macOS with Python 3.13.12 and the installed Chrome. No test opened
+an adapter or programmed physical flash. The earlier records below remain
+historical; they do not expand current hardware qualification.
+
+| Check | Result |
+| --- | --- |
+| Python unit/API/driver tests | 211 passed |
+| New audit regressions | 26 tests across C90, C55, security, OTP policy and failure workflows; many profile/block subcases |
+| C55 geometry/erase | All 38 MPC5748 CFLASH sectors; all 48 CFLASH and 4 DFLASH sectors for each SPC58 profile |
+| Customer OTP and password policy | Reserved/range-crossing requests rejected before USB; all five exact C55 slots independently preserved and verified in controller tests |
+| SHADOW | Reserved selector masks, interlock selection, public/private serial configurations and preservation tested on all three C90 profiles |
+| Transport/image failures | Immediate stop on USB loss during cleanup; modified/truncated/extended reviewed images rejected before opening hardware |
+| Browser | Both reset mappings, presets, cut 2.0 note, SPC58 customer OTP default, controls, S-record selection and 16 MiB scrolling passed |
+| Wiring | JTAG/SPI mapping checks passed |
+| Public source | Private-input and relative-link checks passed |
+
+The comparison and unresolved physical/security qualification questions are in
+[FEATURE_AUDIT.md](FEATURE_AUDIT.md). Hosted platform/build results are available
+in [GitHub Actions](https://github.com/Ewste0/tigard-flasher/actions).
+
+## Historical 0.7.1 checks
+
 Version 0.7.1, checked locally on macOS on 2026-10-22. Python 3.13.12,
 Node.js 25.9.0, Puppeteer 25.14.0, Chrome 155.
 

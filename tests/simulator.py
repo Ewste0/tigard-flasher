@@ -108,6 +108,13 @@ class SimMemory(WordMemory):
                         return
                 elif self.c55 and offset in (0x10, 0x14, 0x18, 0x1C) and self.lock_stuck:
                     return
+                elif not self.c55 and offset == 0x10:
+                    # MPC5607B RM fig30-10: LMS has low/mid selects only.
+                    # TSLK bit20 belongs to LML/SLL, not to this register.
+                    value &= 0x0003003F if base == 0xC3F88000 else 0xF
+                elif not self.c55 and offset == 0x14:
+                    value &= {'spc560b54': 0x3, 'spc560b60': 0xF,
+                              'spc560b64': 0xFF}[self.chip.key]
                 c["regs"][offset] = value
                 return
         block = next((b for b in self.blocks if b[0] <= address < b[0] + b[1]), None)
@@ -136,11 +143,20 @@ class SimMemory(WordMemory):
         if good and c["mcr"] & 4:
             for b in self.blocks:
                 a, size, ctrl, offset, bit = b
-                if ctrl == base and c["regs"][offset] & (1 << bit) and self._unlocked(b):
+                if ctrl != base:
+                    continue
+                selected = bool(c["regs"][offset] & (1 << bit))
+                if not self.c55:
+                    # RM30.6.3: SHADOW selection is the interlock address;
+                    # LMS/HBS cannot select it, and are ignored in shadow mode.
+                    shadow = 0x200000 <= c['interlock'] < 0x204000
+                    if a == 0x200000:
+                        selected = shadow
+                    elif shadow:
+                        selected = False
+                if selected and self._unlocked(b):
                     if a in (0x400000, 0xC00000):
                         continue  # OTP physically ignores erase.
-                    if not self.c55 and a == 0x200000 and not 0x200000 <= c['interlock'] < 0x204000:
-                        continue
                     data, start = self._region(a, size)
                     data[start:start + size] = b"\xff" * size
         elif good and c["mcr"] & 0x10:

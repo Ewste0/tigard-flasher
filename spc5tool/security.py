@@ -44,8 +44,7 @@ def login_result(memory, chip, password, *, status=None, password_submitted=True
 
 def installation_message(chip):
     message = "Password stored and read-back verified. Protection settings were preserved; protection was not activated."
-    if chip.password_bits == 256:
-        message += " Power-cycle the target before testing password login."
+    message += " Power-cycle the target before testing password login."
     if not chip.password_protocol:
         message += " JTAG login is not yet supported for this device."
     return message
@@ -77,9 +76,13 @@ def validate_shadow(data):
         raise ValueError("SHADOW validation needs the complete 16 KiB sector")
     a = int.from_bytes(data[0x3DE0:0x3DE4], "big")
     b = int.from_bytes(data[0x3DE4:0x3DE8], "big")
-    if a != b or a >> 16 != 0x55AA:
-        raise ValueError("SHADOW censorship words must match and preserve serial control 0x55AA; this image would lock out the target")
-    if a & 0xFFFF != 0x55AA:
+    serial_control, censorship_control = a >> 16, a & 0xFFFF
+    # RM0037, Table 15 / Figures 10–11: equal words with CW=0x55AA
+    # are uncensored regardless of SC. Public serial access (SC!=0x55AA)
+    # must therefore be preserved when restoring an existing SHADOW sector.
+    if a != b or (serial_control != 0x55AA and censorship_control != 0x55AA):
+        raise ValueError("SHADOW censorship words must match and SC or CW must be 0x55AA; this image would lock out the target")
+    if censorship_control != 0x55AA:
         validate_c90_password(data[0x3DD8:0x3DE0])
 
 
@@ -114,6 +117,8 @@ def provision(flash, data, backup, *, slot="jtag"):
             with flash.stage("backup", 0, 0.2):
                 backup([(b, flash.read(b.address, b.size)) for b in blocks])
             with flash.stage("install and verify password", 0.2, 1):
-                flash.program(address, data)
+                # Family, complete password and exact slot were validated above.
+                # Generic Program only accepts customer OTP, never these slots.
+                flash._program_checked(address, data)
     except VerificationError:
         raise VerificationError("Password read-back verification failed") from None

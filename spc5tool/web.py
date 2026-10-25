@@ -21,7 +21,7 @@ from .errors import DriverError
 from .files import save_backup, sha256, write_new
 from .images import decode_image, MAX_IMAGE, MAX_UPLOAD, SREC_SUFFIXES
 from .flash import Flash
-from .geometry import Block, backup_blocks, blocks_for, select_blocks
+from .geometry import Block, backup_blocks, blocks_for, select_blocks, validate_program_range
 from .idcode import read_idcode
 from .mpsse import DEFAULT_URL, DEFAULT_FREQUENCY, MpsseTransport
 from .session import TargetSession
@@ -310,9 +310,7 @@ class Workspace:
                 if action == "write" and any(b.kind == "otp" for b in blocks):
                     raise ValueError("OTP needs Program once; erase/preserve/write is not supported")
                 if action == "program":
-                    unit = chips.CHIPS[target].program_unit
-                    if address % unit or size % unit:
-                        raise ValueError(f"Program requires complete aligned {unit}-byte ECC units")
+                    validate_program_range(chips.CHIPS[target], address, size)
         if "fast_read" not in request:
             fast_read = (target == "spc5748g" and action in ("read", "write", "program", "erase", "verify", "blank") and frequency >= 100000
                          and bool(blocks) and all(b.region == "CFLASH" for b in blocks))
@@ -459,8 +457,16 @@ class Workspace:
                 data = None
                 if plan["file_id"]:
                     with self.file(plan["file_id"])[1].open('rb') as stream:
-                        stream.seek(plan.get("image_offset", 0))
-                        data = stream.read(plan["length"])
+                        image_data = stream.read(MAX_IMAGE + 1)
+                    # Bind execution to the bytes whose hash was reviewed.
+                    # Check the complete decoded image, including S-record
+                    # segments, before opening USB or modifying target state.
+                    reviewed = plan["image"]
+                    if (len(image_data) != reviewed["size"] or
+                            sha256(image_data) != reviewed["sha256"]):
+                        raise ValueError("image changed after upload; reload it and review a new operation")
+                    offset = plan.get("image_offset", 0)
+                    data = image_data[offset:offset + plan["length"]]
                     if len(data) != plan["length"]:
                         raise ValueError("image data is incomplete")
                 self._log(job, f"{action.replace('_', ' ').capitalize()} {plan['length']:,} bytes at 0x{plan['address']:08X}.")

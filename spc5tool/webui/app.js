@@ -126,7 +126,7 @@ function setTarget() {
     radio.addEventListener("change", () => setRegion(r));
   });
   $("readScope").replaceChildren(...(target.read_presets || []).map(p => new Option(p.name, p.key)), new Option("Custom range", "custom"));
-  $("profileNote").textContent = target.key.startsWith("spc58") ? "Hardware validation pending · 16-byte programming units" : "";
+  $("profileNote").textContent = target.key.startsWith("spc58") ? "Cut 2.0 only · Hardware validation pending · 16-byte programming units" : "";
   setRegion(target.regions[0]);
   if (target.read_presets?.length) applyPreset(target.read_presets[0].key);
   renderWiring(); controls();

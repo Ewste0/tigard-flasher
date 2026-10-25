@@ -21,6 +21,10 @@ class FlashRegion:
     note: str = ""
     kind: str = "flash"
     writable: bool = True
+    # None: ordinary programming covers the mapped region. Otherwise only the
+    # listed (address, size) customer windows are accepted by generic Program.
+    # Security provisioning has its own exact-slot validation.
+    program_ranges: tuple | None = None
 
 
 @dataclass(frozen=True)
@@ -119,7 +123,9 @@ SPC5748G = Chip(
                     "small 0x00F90000-0x00FFFFFF (8x16k,6x32k,2x64k) + 22x256k @0x01000000+"),
         FlashRegion("UTEST", 0x00400000, 0x00004000,
                     "Default read starts at 0x004000A0, excluding factory ECC tests. "
-                    "Passwords may be read-protected. User OTP starts at 0x00401000. No erase.", "otp"),
+                    "Program once: user OTP 0x00401000–0x00403FFF only. "
+                    "Use Install password for password slots. No erase.", "otp",
+                    program_ranges=((0x401000, 0x3000),)),
         FlashRegion("BAF", 0x00404000, 0x00004000, "Factory Boot Assist Flash", "rom", False),
         FlashRegion("HSMData", 0x00F80000, 0x00008000, "Security-dependent access; write backend unavailable", "security", False),
         FlashRegion("HSMCode", 0x00610000, 0x00020000, "Two 64 KiB blocks; write backend unavailable", "security", False),
@@ -154,14 +160,18 @@ SPC5748G = Chip(
 # user's ST_SPC58NH92_1x32x64k_DFlash.pcp. No proprietary loader is executed.
 SPC58NH92 = Chip(
     key="spc58nh92", part="SPC58NH92", nxp_twin="ST SPC58NH · 10 MiB code + 256 KiB data",
-    family="Chorus H-line", core="3x e200z4 · boot core 2",
+    family="Chorus H-line · cut 2.0", core="3x e200z4 · boot core 2",
     jtagc_irlen=6, once_irlen=10, has_jcomp=True, has_mmu=True,
     algorithm="c55-spc58h", program_unit=16, password_bits=256, password_protocol="",
     watchdogs=(0xF4058000,), buffering=(),
     sram_base=0x40028000, flash_ctrl={"FMC": 0xF7FE0000, "SWT": 0xF4058000},
     regions=(FlashRegion("DFLASH", 0x00800000, 0x40000, "4 × 64 KiB"),
              FlashRegion("CFLASH", 0x00FC0000, 0xA00000, "10 MiB; 128-bit ECC programming"),
-             FlashRegion("UTEST", 0x00400000, 0x4000, "OTP; passwords and DCF records", "otp"),
+             FlashRegion("UTEST", 0x00400000, 0x4000,
+                         "Program once: customer OTP 0x00401000–0x00401FFF only. "
+                         "Use Install password for password slots. Factory ECC tests at "
+                         "0x00400280–0x004002FF prevent a reliable full raw read. No erase.",
+                         "otp", program_ranges=((0x401000, 0x1000),)),
              FlashRegion("BAF", 0x00404000, 0x4000, "Factory boot firmware", "rom", False),
              FlashRegion("HSMCode", 0x00608000, 0x30000, "HSM access depends on security configuration; write backend unavailable", "security", False),
              FlashRegion("HSMData", 0x00680000, 0x8000, "HSM access depends on security configuration; write backend unavailable", "security", False)),
@@ -170,8 +180,11 @@ SPC58NH92 = Chip(
     read_presets=({"key": "dflash", "name": "DFLASH only · 256 KiB", "address": 0x00800000,
                    "size": 0x40000, "filename": "SPC58NH92_DFLASH"},
                   {"key": "cflash", "name": "CFLASH · 10 MiB", "address": 0xFC0000,
-                   "size": 0xA00000, "filename": "SPC58NH92_CFLASH"}),
+                   "size": 0xA00000, "filename": "SPC58NH92_CFLASH"},
+                  {"key": "utest_user", "name": "UTEST customer OTP · 4 KiB", "address": 0x401000,
+                   "size": 0x1000, "filename": "SPC58NH92_UTEST_User_0x00401000", "region_default": "UTEST"}),
     notes=("SPC58NH hardware validation pending; register sequences tested offline.",
+           "Cut 2.0 only: IDCODE 0x01146041; other revisions require a qualified profile.",
            "UTEST cannot be erased; each ECC unit can be programmed only once.",
            "14-pin connector follows the user's MPC5748G wiring reference."),
 )

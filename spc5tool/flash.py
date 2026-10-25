@@ -4,7 +4,7 @@ import math
 from contextlib import contextmanager
 
 from .errors import DriverError, NexusBusError, OperationTimeout, VerificationError
-from .geometry import select_blocks
+from .geometry import select_blocks, validate_program_range
 from .mpsse import MpsseError
 
 DONE, PEG, PGM, ERS, EHV = 0x400, 0x200, 0x10, 4, 1
@@ -68,10 +68,15 @@ class Flash:
                     raise exc
                 detail = f"{exc}; flash MCR=0x{status:08X}."
                 if (self.chip.algorithm == "c55-mpc5748" and
-                        0x400060 <= exc.address < 0x4000A0 and status & 0x8000):
+                        0x400060 <= exc.address < 0x4000A0 and status & (0x8000 | 0x10000000)):
                     detail += (" UTEST factory ECC test patterns deliberately trigger errors. "
                                "Select UTEST config + user (0x004000A0, length 0x3F60) "
                                "or UTEST user OTP (0x00401000, length 0x3000). "
+                               "No complete dump was returned.")
+                elif (self.chip.algorithm == "c55-spc58h" and
+                        0x400280 <= exc.address < 0x400300 and status & 0x8000):
+                    detail += (" SPC58 UTEST factory ECC test patterns deliberately trigger errors. "
+                               "Select UTEST customer OTP (0x00401000, length 0x1000). "
                                "No complete dump was returned.")
                 elif status & 0x8000:
                     detail += " The flash controller reports an ECC error."
@@ -170,8 +175,15 @@ class Flash:
                         if key is not None:
                             self.memory.write32(address, key)
                         self.memory.write32(address, original)
+                    except MpsseError as exc:
+                        # TAP state and completion of this write are unknown.
+                        # Stop immediately, including other saved lock banks.
+                        self.poisoned = True
+                        failure = exc
+                        break
                     except Exception as exc:
-                        # Attempt every saved lock even if one USB transfer fails.
+                        # A reported controller error is distinct from a lost
+                        # transport; attempt the remaining lock restorations.
                         failure = exc
                 if failure is not None:
                     self.poisoned = True
@@ -208,7 +220,10 @@ class Flash:
                     offsets = (0x38, 0x3C, 0x40, 0x44) if self.c55 else (
                         (0x10,) if block.region == "DFLASH" else (0x10, 0x14))
                     for bank, offset in enumerate(offsets):
-                        value = block.mask if bank == block.bank else 0
+                        # C90 SHADOW is selected by the interlock address.
+                        # Its TSLK bit (20) belongs to LML/SLL, not LMS/HBS.
+                        # RM30.6.3: LMS/HBS do not select the shadow sector.
+                        value = block.mask if bank == block.bank and block.kind != "shadow" else 0
                         self.memory.write32(base + offset, value)
                         if self.memory.read32(base + offset) != value:
                             raise DriverError("flash erase selector did not latch")
@@ -219,6 +234,16 @@ class Flash:
                 self.progress("erase", round((index + 1) / len(blocks), 12), 1)
 
     def program(self, address, data):
+        validate_program_range(self.chip, address, len(data))
+        self._program_checked(address, data)
+
+    def _program_checked(self, address, data):
+        """Program a validated customer range or a validated security slot.
+
+        The only security caller is provision(), which checks the family,
+        complete password length/value and exact slot before entering here.
+        Alignment, blankness, locks and read-back checks remain mandatory.
+        """
         self._require_writable()
         blocks = select_blocks(self.chip, address, len(data))
         self._check_blocks(blocks)

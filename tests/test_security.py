@@ -33,7 +33,7 @@ class SecurityTests(unittest.TestCase):
         self.assertEqual(SPC58EH92.core_selectors, (0x2A, 0x28))
 
     def test_otp_program_read_verify_blank_and_no_erase(self):
-        for chip, address in ((SPC560B64, 0x400000), (SPC560B64, 0xC00000), (SPC5748G, 0x400300), (SPC58NH92, 0x400300)):
+        for chip, address in ((SPC560B64, 0x400000), (SPC560B64, 0xC00000), (SPC5748G, 0x401000), (SPC58NH92, 0x401000)):
             with self.subTest(chip=chip.key, address=address):
                 memory = SimMemory(chip)
                 flash = Flash(memory, chip)
@@ -62,7 +62,8 @@ class SecurityTests(unittest.TestCase):
         self.assertEqual(actual[:0x3DD0], b'\xff' * 0x3DD0)
         self.assertEqual(actual[0x3DD0:], before[0x3DD0:])
         validate_shadow(actual)
-        self.assertIn((0xC3F88010, 1 << 20), memory.log)
+        self.assertNotIn((0xC3F88010, 1 << 20), memory.log)
+        self.assertIn((0x200000, 0xFFFFFFFF), memory.log)
 
     def test_invalid_shadow_patch_never_erases(self):
         memory = SimMemory(SPC560B64)

@@ -1,6 +1,6 @@
 # OTP, SHADOW and passwords
 
-This document describes version 0.7.1. Most OTP/password paths have only offline
+This document describes version 0.7.6. Most OTP/password paths have only offline
 tests. One MPC5748G has limited UTEST and installed-password checks; see
 [VALIDATION.md](VALIDATION.md). Unlocking a protected MPC5748G is not yet bench
 validated.
@@ -13,9 +13,9 @@ validated.
 | SPC560 SHADOW | Yes | Erased 8-byte units, with configuration validation | Preserves valid boot/security configuration |
 | SPC560 CFLASH_OTP, DFLASH_OTP | Yes | Once per erased 8-byte ECC unit | Not supported by silicon |
 | MPC5748 CFLASH | Yes | Erased 8-byte units | Yes |
-| MPC5748 UTEST | Exclude factory ECC tests; subject to read protection | Once per erased 8-byte ECC unit | Not supported by silicon |
+| MPC5748 UTEST | Exclude factory ECC tests; subject to read protection | Customer OTP only, erased 8-byte units; passwords via Install password | Not supported by silicon |
 | SPC58NH92/EH92 CFLASH, DFLASH | Yes | Erased 16-byte units | Yes |
-| SPC58NH92/EH92 UTEST | Subject to read protection | Once per erased 16-byte unit | Not supported by silicon |
+| SPC58NH92/EH92 UTEST | Customer OTP preset; other ranges subject to ECC/protection | Customer OTP only, erased 16-byte units; passwords via Install password | Not supported by silicon |
 | BAF | Subject to device permissions | Unavailable: factory boot area | Unavailable |
 | HSM code/data | Subject to HSM/PASS permissions | Backend unavailable | Backend unavailable |
 
@@ -30,8 +30,12 @@ Select an OTP region, load the binary, set the address, and choose **Program onc
 Review the address, image length, affected block, and irreversible-operation note.
 The app saves the affected OTP units before programming and verifies afterward. Erase
 and patch Write are disabled for OTP and rejected by the API/CLI before USB opens.
-Reserved/factory fields and DCF formats remain device-specific: a raw OTP image
-is not validated as a complete security or boot policy.
+Generic UTEST Program accepts only `0x00401000..0x00403FFF` on MPC5748G and
+`0x00401000..0x00401FFF` on SPC58NH92/EH92. Factory/reserved locations,
+lifecycle and DCF records are rejected before USB opens. Password slots use
+the separate **Install password** operation, with exact slot and length checks.
+No generic override bypasses this policy. The physical 16 KiB UTEST read map
+is retained; readable does not mean writable.
 
 **Program once** is visible only for OTP regions in the UI. Use **Write** for
 ordinary CFLASH/DFLASH. The CLI's low-level `program` operation remains available
@@ -59,12 +63,23 @@ factory tests and protected slots. Backup failure or nonblank target data stops
 the operation before programming. Backups for erasable flash still cover full
 affected erase blocks.
 
+### SPC58H UTEST reads and revision
+
+Selecting UTEST defaults to the documented 4 KiB customer OTP at
+`0x00401000..0x00401FFF`. The factory ECC diagnostic span is
+`0x00400280..0x004002FF`; it differs from MPC5748G. A raw full-block read may
+fail there and is never completed with substituted bytes. The 16-byte program
+unit remains mandatory. Current NH/EH profiles cover cut 2.0 with IDCODE
+`0x01146041`; other revisions require a separately reviewed map.
+
 SHADOW erase clears its user area, then restores the configuration tail starting
 at offset `0x3DD0`. It does not leave the entire sector blank. Patch write validates
 both censorship words before erasing and restores configuration before user data.
 Power loss during that erase/rebuild can still lose configuration. A backup cannot
 prevent that interruption. Reserved fields are preserved when patching a smaller
 image; a complete supplied SHADOW image must preserve the intended device settings.
+Matching censorship words with CW=`0x55AA` are valid regardless of SC; this
+preserves both public and private serial boot modes on an uncensored device.
 
 ## Password lengths and implemented capabilities
 
@@ -92,6 +107,7 @@ PASS-group authentication and automatic protection activation are not implemente
 Opening an already uncensored SPC560 cannot establish that a supplied password
 was correct. Protected targets may deny backups/readback and cause installation
 to fail before programming.
+Power-cycle after installing a password on every supported family, including SPC560.
 
 ### MPC5748G Open with password
 
@@ -181,8 +197,11 @@ never printed or hashed into a public plan.
   MPC57xx factory ECC/EDC test patterns, including the double-bit error test
   at `0x00400060`. This address was reproduced on the MPC5748G bench.
 - ST [RM0452](https://www.st.com.cn/resource/en/reference_manual/rm0452-spc58-h-line--32-bit-power-architecture-automotive-mcu-triple-z4-cores-200-mhz-10-mbytes-flash-hsm-asild-stmicroelectronics.pdf),
-  table 14: SPC58H password offsets. The full download could not be retrieved in
-  this environment; the indexed table confirms slot addresses, not JTAG wire order.
+  table 14 and section 9.3: SPC58H password/customer OTP boundaries, diagnostic
+  locations and 128-bit ECC programming. The full download could not be retrieved
+  in this environment; official indexed pages establish these facts, not JTAG wire order.
+- ST [ES0429](https://www.st.com/resource/en/errata_sheet/es0429-spc58ehx-spc58nhx-devices-errata-jtagid--0x01146041-stmicroelectronics.pdf),
+  page 1: the supported H-line IDCODE identifies cut 2.0.
 - ST [DS12304](https://www.st.com/resource/en/datasheet/spc58nh92e7.pdf), flash
   tables and core availability; ST's [automotive OpenOCD source](https://github.com/STMicroelectronics/OpenOCD/tree/openocd-automotive-mcu-r1),
   `spc58xh.c` and target configuration: H-line sector mapping, boot core and

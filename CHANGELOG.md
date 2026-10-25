@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.7.6 — 2026-10-25
+
+- Audit every shipped MCU profile against ST/NXP documentation and compare
+  implemented operations with PROGPPCNEXUS. Record evidence and open hardware
+  qualification gaps in `docs/FEATURE_AUDIT.md`; no OTP hardware writes performed.
+- Fix SPC560 SHADOW erase selection: use its interlock address, keeping TSLK
+  bit 20 in lock registers only. Correct the controller model's reserved masks.
+- Accept valid uncensored SPC560 SHADOW configurations with public serial access;
+  continue rejecting mismatched censorship words and permanent-lockout images.
+- Limit generic C55 UTEST Program to documented customer OTP: MPC5748G 12 KiB,
+  SPC58NH/EH 4 KiB, starting at 0x00401000. Keep exact-slot password installation
+  separate; reject raw lifecycle, DCF and factory writes before opening USB.
+- Default SPC58 UTEST reads to customer OTP; explain factory ECC diagnostic
+  failures and identify supported H-line profiles as cut 2.0 only.
+- Stop all remaining lock-restoration traffic after USB failure. Recheck uploaded
+  image size and SHA-256 before opening hardware for a reviewed operation.
+- Tell every family to power-cycle after password installation. Add independent
+  geometry, OTP boundary, security, failure-path and browser regressions.
+
 ## 0.7.5 — 2026-10-25
 
 - Align SPC560 debug entry with the inspected P&E connection order: arm

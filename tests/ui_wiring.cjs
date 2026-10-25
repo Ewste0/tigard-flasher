@@ -121,6 +121,12 @@ async function main() {
         assert.equal(await page.$eval('[data-operation="erase"]', node => node.disabled), false);
         await page.select("#readScope", "cflash");
         assert.equal(await page.$eval('[name="region"]:checked', node => node.value), "CFLASH");
+        await page.click('[name="region"][value="UTEST"]');
+        assert.equal(await page.$eval("#addressInput", node => node.value), "0x00401000");
+        assert.equal(await page.$eval("#lengthInput", node => node.value), "0x00001000");
+        assert.equal(await page.$eval("#readScope", node => node.value), "utest_user");
+        assert.match(await page.$eval("#profileNote", node => node.textContent), /Cut 2.0/);
+        assert.match(await page.$eval("#regionNote", node => node.textContent), /0x00401FFF/);
         await page.select("#chipSelect", "spc5748g");
         assert.equal(await page.$eval("#readScope", node => node.value), "config");
         assert.equal(await page.$eval("#addressInput", node => node.value), "0x00FA8000");

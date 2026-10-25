@@ -5,9 +5,9 @@ CLI, and automated tests with isolated device models. Uses Tigard's FT2232H chan
 No account or subscription is needed. The application runs locally; GitHub hosts
 the source and release downloads, not a web service that accesses USB.
 
-**Hardware validation is limited to one MPC5748G board: full CFLASH, configuration and UTEST
-config/user reads, plus one configuration-block write with a matching readback.** Other profiles
-have offline tests only.
+**Hardware evidence is limited:** MPC5748G read/verify tests and user-reported
+successful full erase/write; the SPC560B64L3 connection fix also has user confirmation.
+OTP operation on every supported MCU has not been hardware-qualified.
 See the [feature audit](docs/FEATURE_AUDIT.md) and [validation record](docs/VALIDATION.md).
 
 ![Live interface displaying a synthetic viewer-test file](docs/ui-live.png)
@@ -24,14 +24,16 @@ Screenshot uses generated test bytes; no firmware or connected target is shown.
   A full 6,225,920-byte dump took about four minutes at 5 MHz on the tested board.
 - The same queued reads accelerate Write/Erase backups, blank checks and verification.
   Complete MPC5748 CFLASH quad-pages use 128-byte programming; other cases retain
-  the original ECC-unit path. Buffer transfers passed a hardware check; actual
-  programming timing has not yet been measured.
-- OTP read, program once, verify, and blank check; SHADOW writes preserve valid configuration.
+  the original ECC-unit path. Earlier full erase/write timings are recorded in the
+  validation notes; the latest write optimizations lack a full write benchmark.
+- Customer OTP read, program once, verify, and blank check; SHADOW writes preserve valid configuration.
 - Family-specific password lengths, SPC560/MPC5748G password entry, and password installation.
   Protected-target C55 unlocking remains unvalidated; SPC58 JTAG login and HSM programming remain unavailable. See [security operations](docs/SECURITY_OPERATIONS.md).
 - MPC5748G **Config only** default: 32 KiB at `0x00FA8000`. Full-array and custom ranges are selectable.
 - MPC5748G UTEST presets exclude the factory ECC test area. The default UTEST
   file starts at `0x004000A0`; it is not a complete 16 KiB raw image.
+- SPC58 UTEST defaults to its 4 KiB customer OTP. Generic Program excludes
+  factory/lifecycle/DCF fields; password installation is a separate operation.
 - Continuous virtualized hex/ASCII viewer for raw binaries up to 16 MiB, offset navigation,
   named saves, SHA-256, drag-and-drop, and cancellable reads. Write/Erase may be
   stopped during backup/preflight, before the first flash modification.
@@ -41,15 +43,14 @@ Screenshot uses generated test bytes; no firmware or connected target is shown.
 
 | Profile | Main and data flash | Additional regions |
 | --- | --- | --- |
-| `mpc5748g` / `spc5748g` | 6080 KiB CFLASH; 32 KiB config default | 16 KiB UTEST OTP; BAF and separate HSM ranges read-only |
+| `mpc5748g` / `spc5748g` | 6080 KiB CFLASH; 32 KiB config default | 16 KiB UTEST with 12 KiB customer OTP; BAF and separate HSM ranges read-only |
 | `spc560b54` / `mpc5605b` | 768 KiB CFLASH, 64 KiB DFLASH | 16 KiB SHADOW, 8 KiB CFLASH_OTP, 8 KiB DFLASH_OTP |
 | `spc560b60` / `mpc5606b` | 1024 KiB CFLASH, 64 KiB DFLASH | Same SHADOW and OTP regions as B54 |
 | `spc560b64` / `mpc5607b` | 1536 KiB CFLASH, 64 KiB DFLASH | Same SHADOW and OTP regions as B54 |
-| `spc58nh92`, `spc58eh92` | 10 MiB CFLASH, 256 KiB DFLASH | 16 KiB UTEST OTP; BAF and HSM read-only |
+| `spc58nh92`, `spc58eh92` (cut 2.0) | 10 MiB CFLASH, 256 KiB DFLASH | 16 KiB UTEST with 4 KiB customer OTP; BAF and HSM read-only |
 | SPI `w25q128jv` | 16 MiB; JEDEC `EF4018` | SPI security registers are not supported |
 
-Only one MPC5748 configuration-block write has hardware evidence. New profiles,
-SHADOW and SPC58 programming have offline tests only. MPC5748G has a limited
+SPC560 OTP/SHADOW and SPC58 programming have offline tests only. MPC5748G has a limited
 installed-password check on an already-open Customer Delivery device;
 protected-target password unlock remains unvalidated. See the
 [security operations guide](docs/SECURITY_OPERATIONS.md). Profiles
@@ -147,10 +148,13 @@ SPC58H. `erase` requires whole blocks and cannot erase OTP. SHADOW erase restore
 its security/boot configuration tail before returning; only its user area is left blank.
 
 For OTP, select its region and use **Program once** after loading the image.
-The tool checks the input range, saves the original block, requires erased input
+The tool checks the input range, saves the affected OTP units, requires erased input
 units, programs, and verifies. **Blank check** means every requested byte reads FF;
 it cannot prove an ECC unit has never been programmed by another tool. Never
 reuse a programmed OTP unit. Backups cannot undo an OTP write.
+Generic C55 UTEST programming is limited to customer OTP starting at `0x00401000`:
+12 KiB for MPC5748G, 4 KiB for SPC58NH/EH. Use **Install password** for slots;
+raw lifecycle, DCF and factory programming are unavailable.
 
 Password lengths are **16 hex digits / 64 bits** for the SPC560B profiles and
 **64 hex digits / 256 bits / 32 bytes** for MPC5748G and SPC58H. CLI commands use

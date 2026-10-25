@@ -113,7 +113,7 @@ class FastProgramTests(unittest.TestCase):
                     self.assertEqual(pulses, 2)
 
     def test_otp_and_ff_units_keep_single_unit_path(self):
-        for address, data in ((0x400100, bytes(range(128))),
+        for address, data in ((0x401000, bytes(range(128))),
                               (0xFA8000, b'\xff' * 8 + bytes(range(120)))):
             memory = SimMemory(SPC5748G)
             flash = Flash(memory, SPC5748G)
@@ -121,7 +121,7 @@ class FastProgramTests(unittest.TestCase):
             flash.program(address, data)
             self.assertEqual(flash.read(address, len(data)), data)
             pulses = sum(a == 0xFFFE0000 and v == 0x11 for a, v in memory.log)
-            self.assertEqual(pulses, 16 if address == 0x400100 else 15)
+            self.assertEqual(pulses, 16 if address == 0x401000 else 15)
 
     def test_buffer_failure_never_asserts_ehv(self):
         for error in (OperationTimeout('not ready'), MpsseError('short USB read')):

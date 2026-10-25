@@ -186,7 +186,7 @@ class WebTests(unittest.TestCase):
 
     def test_otp_full_workflow_and_unavailable_operations(self):
         for target, address, unit in (("spc560b64", 0x400000, 8), ("spc560b64", 0xC00000, 8),
-                                      ("spc5748g", 0x401000, 8), ("spc58nh92", 0x400300, 16)):
+                                      ("spc5748g", 0x401000, 8), ("spc58nh92", 0x401000, 16)):
             with self.subTest(target=target, address=address):
                 data = bytes(range(unit))
                 _, image = self.call("/api/files?name=otp-fixture.bin", data, raw=True)

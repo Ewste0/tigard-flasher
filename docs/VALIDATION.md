@@ -1,5 +1,24 @@
 # Validation and scope
 
+## Full profile and OTP audit — 2026-10-25
+
+Version 0.7.6 audits every shipped MCU profile and compares supported operations
+with PROGPPCNEXUS. See [FEATURE_AUDIT.md](FEATURE_AUDIT.md) for the findings,
+per-profile OTP ranges, primary sources, comparison matrix and open questions.
+SHADOW selection/censorship, UTEST write policy, USB cleanup, reviewed-image
+integrity and family-specific diagnostics were corrected. No hardware was
+connected or programmed during this audit.
+
+After 0.7.5 the user reported that the SPC560 fix worked. This is user-reported
+connection success, not an independently captured full dump or proof of OTP,
+SHADOW programming or protected-password authentication on that device.
+
+New tests cover all six profiles, all C55 erase selectors, OTP boundaries and
+ECC units, preserved locks/neighboring data, exact password slots and rejection
+before USB access. Controller models do not emulate silicon ECC history,
+electrical timing or lifecycle behavior. Physical OTP qualification remains
+outstanding, as detailed in the audit.
+
 ## SPC560 connection comparison and failure capture — 2026-10-25
 
 The user retested v0.7.4: the register-only instruction `0x1BE1D001` also failed
