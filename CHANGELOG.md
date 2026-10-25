@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.7.4 — 2026-10-25
+
+- Remove the SPC560 first-step dependency on uninitialized SRAM. Inject VLE
+  instructions at the documented BAM ROM address, with the following fetch
+  also inside ROM. Host-driven memory/flash access no longer modifies scratch RAM.
+- Check instruction execution with a register-only self-test before memory
+  access. It requires a transformed result, rejects stale scans, and preserves
+  strict error handling with no automatic instruction replay.
+- Initialize e200z0h DBCR0 with the documented second write after enabling EDM.
+- Add regression coverage for early instruction fetch, empty SRAM, register
+  self-test failure and session cleanup. The reported SPC560B64L3 Windows target
+  still needs a hardware retest; offline tests do not establish successful access.
+
 ## 0.7.3 — 2026-10-25
 
 - Import Motorola S-record files in the UI and CLI, validating checksums, record

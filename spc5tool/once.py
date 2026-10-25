@@ -145,12 +145,24 @@ class OnCE:
             if held_reset:
                 continue
             self.write_register(DBCR0, 0x80000000)
+            if not self.chip.has_mmu:
+                # e200z0h: the first write establishing EDM only sets EDM.
+                # A second write initializes the other DBCR0 fields (RM0046
+                # 36.14); otherwise earlier debug-event enables can survive.
+                self.write_register(DBCR0, 0x80000000)
             self.write_register(DBSR, 0xFFFFFFFF)
             self.write_register(OCR, 0x6)  # WKUP | FDB
         self.select(cores[0])
         self.wait_debug(entering_debug=not self.chip.has_mmu)
 
-    def step(self, instruction, operand=0, *, force_operand=False, pc=0x40000000):
+    def step(self, instruction, operand=0, *, force_operand=False, pc=None):
+        if pc is None:
+            base = self.chip.debug_instruction_base
+            if base is None:
+                raise DriverError(f"{self.chip.part}: no instruction fetch address configured")
+            pc = base + 4
+        if not isinstance(pc, int) or not 4 <= pc <= 0xFFFFFFFC or pc & 3:
+            raise ValueError("next PC must be an aligned 32-bit address at least 4")
         ctl = (0x400 if force_operand else 0) | (2 if self.chip.has_mmu else 0)
         state = CpuScan(operand, 0, 0, pc - 4, instruction, ctl)
         self.write_register(CPUSCR, state.pack(), 192)

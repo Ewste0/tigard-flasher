@@ -16,6 +16,7 @@ class OnceTarget(FakeTarget):
         self.scan = [0] * 6
         self.handoff = False
         self.executed = []
+        self.fetches = []
         self.reset_asserted = False
         self.halted = False
         super().__init__(0x1234501D, 5)
@@ -80,23 +81,31 @@ class OnceTarget(FakeTarget):
             raise AssertionError('CPU instruction executed outside debug')
         if not ctl & 0x400:
             raise AssertionError('operand injection not enabled')
+        # Instruction prefetch may precede the injected store completing.
+        # Resolve it BEFORE effects, so a bootstrap cannot initialize the very
+        # SRAM it is already fetching from. BAM is independent immutable ROM.
+        next_pc = pc + 4
+        self.fetches.append(next_pc)
+        if 0xFFFFC000 <= next_pc <= 0xFFFFFFFC:
+            fetched = 0x1800D000  # synthetic ROM instruction, never executed
+        else:
+            try:
+                fetched = self.read_word(next_pc)
+            except KeyError as exc:
+                raise AssertionError('instruction fetch from uninitialized memory') from exc
         if op == 0x181F0900:
             for i, value in enumerate(self.gprs):
                 self.write_word(wbbr + 4 * i, value)
         elif op == 0x501F0000:
             self.scan[0] = self.gprs[0] = self.read_word(wbbr)
-        elif op == 0x1BE1D000:
-            self.gprs[1] = wbbr
+        elif op in (0x1BE1D000, 0x1BE1D001):
+            self.scan[0] = self.gprs[1] = wbbr | (op & 1)
         elif op == 0x543F0000:
             self.write_word(wbbr, self.gprs[1])
         else:
             raise AssertionError(f'unknown VLE instruction {op:08x}')
-        self.scan[3] = pc + 4
-        # AN4365: after injection the next instruction is fetched. A fetch from
-        # flash during erase/program would be invalid; demand initialized SRAM.
-        if not 0x40000000 <= self.scan[3] < 0x40000080:
-            raise AssertionError('post-step fetch outside scratch SRAM')
-        self.scan[4] = self.read_word(self.scan[3])
+        self.scan[3] = next_pc
+        self.scan[4] = fetched
 
     def read_word(self, address):
         return int.from_bytes(bytes(self.memory[address + i] for i in range(4)), 'big')

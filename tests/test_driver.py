@@ -135,11 +135,25 @@ class OnceTests(unittest.TestCase):
         once.attach()
         memory = OnceMemory(once)
         memory.initialize()
-        for address, value in ((0x40000020, 0x01234567), (0xC3F88000, 0x89ABCDEF)):
+        self.assertEqual(backend.tgt.memory, {})  # self-test changes registers only
+        backend.tgt.write_word(0x00800000, 0x01234567)
+        self.assertEqual(memory.read32(0x00800000), 0x01234567)
+        for address, value in ((0xC3F88004, 0x01234567), (0xC3F88000, 0x89ABCDEF)):
             memory.write32(address, value)
             self.assertEqual(memory.read32(address), value)
             self.assertEqual(backend.tgt.read_word(address), value)
         self.assertTrue(backend.tgt.halted)
+        self.assertEqual(set(backend.tgt.fetches), {0xFFFFC004})
+        self.assertNotIn(0x181F0900, backend.tgt.executed)
+
+    def test_old_sram_bootstrap_fetches_uninitialized_memory(self):
+        from tests.model_once import OnceTarget
+        target = OnceTarget()
+        target.halted = True
+        target.scan = [0x40000000, 0, 0, 0x3FFFFFFC, 0x181F0900, 0x400]
+        with self.assertRaisesRegex(AssertionError, 'fetch from uninitialized'):
+            target.execute()
+        self.assertEqual(target.memory, {})
 
     def make_once(self, chip=SPC560B64):
         tap = Mock()
@@ -161,13 +175,30 @@ class OnceTests(unittest.TestCase):
         once, tap = self.make_once()
         once.step(0x501F0000, 0x12345678, force_operand=True)
         calls = tap.method_calls
-        payload = 0x12345678 | (0x3FFFFFFC << 96) | (0x501F0000 << 128) | (0x400 << 160)
+        payload = 0x12345678 | (0xFFFFC000 << 96) | (0x501F0000 << 128) | (0x400 << 160)
         self.assertEqual(calls[0].args, (10, 0x10))
         self.assertEqual(calls[1].args, (192, payload))
         self.assertEqual(calls[2].args, (10, 0x111))
         self.assertEqual(calls[3].args, (1, 0))
         self.assertEqual(calls[4].args, (10, 0x211))
         self.assertEqual(calls[5].args, (10, 0x210))
+
+    def test_instruction_fetch_requires_a_valid_address_before_scanning(self):
+        once, tap = self.make_once(SPC5748G)
+        with self.assertRaisesRegex(DriverError, 'no instruction fetch address'):
+            once.step(0x1BE1D001)
+        for pc in (0, -4, 0xFFFFC002, 0x100000000):
+            with self.assertRaises(ValueError):
+                once.step(0x1BE1D001, pc=pc)
+        self.assertEqual(tap.method_calls, [])
+
+    def test_z0h_initializes_dbcr0_after_setting_edm(self):
+        once, _ = self.make_once()
+        with patch.object(once, 'write_register', wraps=once.write_register) as writes:
+            once.attach()
+        self.assertEqual([c.args for c in writes.call_args_list],
+                         [(0x12, 5), (0x31, 0x80000000), (0x31, 0x80000000),
+                          (0x30, 0xFFFFFFFF), (0x12, 6)])
 
     def test_chain_word_order(self):
         values = (0x11223344, 0x55667788, 0xAABBCCDD, 0x40000000, 0x501F0000, 0x402)
@@ -304,8 +335,21 @@ class OnceTests(unittest.TestCase):
         memory.write32(0xC3F88000, 0x10)
         self.assertEqual([c.args for c in once.step.call_args_list[-2:]], [(0x1BE1D000, 0x10), (0x543F0000, 0xC3F88000)])
         once.reset_mock()
+        once.step.side_effect = [0x5AA5C33D, 0xA55A3CC3]
         memory.initialize()
-        self.assertEqual(once.step.call_args_list[0].args, (0x181F0900, 0x40000000))
+        self.assertEqual([c.args for c in once.step.call_args_list],
+                         [(0x1BE1D001, 0x5AA5C33C), (0x1BE1D001, 0xA55A3CC2)])
+
+    def test_register_selftest_rejects_stale_results_and_execution_errors(self):
+        for results in ([0x5AA5C33C], [0x5AA5C33D, 0xA55A3CC2],
+                        [DriverError('OSR=0x309')]):
+            once = Mock()
+            once.step.side_effect = results
+            with self.assertRaises(DriverError):
+                OnceMemory(once).initialize()
+            self.assertEqual(once.step.call_count, len(results))
+            # No memory opcode may follow a failed test, and no step is retried.
+            self.assertTrue(all(c.args[0] == 0x1BE1D001 for c in once.step.call_args_list))
 
     def test_unaligned_read_big_endian(self):
         once = Mock(chip=SPC5748G)

@@ -2,7 +2,7 @@
 import time
 import math
 
-from .errors import NexusBusError, OperationTimeout
+from .errors import DriverError, NexusBusError, OperationTimeout
 from .geometry import checked_range
 from .mpsse import MpsseBatch
 from .once import OnCE
@@ -26,15 +26,20 @@ class WordMemory:
 
 
 class OnceMemory(WordMemory):
-    """VLE-only e200z0h. Owns r0/r1 and first 128 SRAM bytes until reset."""
+    """VLE-only e200z0h. Owns r0/r1 until reset; no scratch RAM required."""
     def __init__(self, once):
         self.once = once
 
     def initialize(self):
-        # e_stmw r0,0(r31): initializes ECC with 64-bit transfers (AN4365 4.2).
-        self.once.step(0x181F0900, 0x40000000, force_operand=True)
-        self.write32(0x40000000, 0x1800D000)  # valid VLE NOP fetch after each step
-        self.write32(0x40000004, 0x1800D000)
+        # Test instruction execution/result capture without a memory access.
+        # e_ori's immediate must change the operand: merely echoing the staged
+        # WBBR value would let a stale scan pass. OnCE.step fetches from BAM ROM,
+        # so even this first instruction does not depend on initialized SRAM ECC.
+        for operand in (0x5AA5C33C, 0xA55A3CC2):
+            result = self.once.step(0x1BE1D001, operand, force_operand=True)  # e_ori r1,r31,1
+            if result != operand | 1:
+                raise DriverError("OnCE register self-test failed; instruction result did not match. "
+                                  "No memory operation was started.")
 
     def read32(self, address):
         self.word_address(address)

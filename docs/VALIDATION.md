@@ -1,5 +1,39 @@
 # Validation and scope
 
+## SPC560 first instruction follow-up — 2026-10-25
+
+On v0.7.3 the user's Windows SPC560B64L3 reached the first injected instruction,
+then reported `single-step 0x181F0900, next PC 0x40000000: OSR=0x309`.
+This is a new execution failure, so the driver correctly stopped before flash
+access. It is not evidence of a bad password or a disconnected USB adapter.
+
+The previous bootstrap put the injected PC at `0x3FFFFFFC`, outside SRAM, and
+directed the next instruction fetch into SRAM while that same instruction was
+initializing its ECC. That makes initialization depend on fetch/store ordering.
+The status alone does not establish which event caused the reported error.
+[NXP AN4365 sections 2.6–2.7 and 4.2](https://www.nxp.com/docs/en/application-note/AN4365.pdf)
+describe the next fetch and the ECC initialization requirement.
+
+Version 0.7.4 removes this dependency: the host-driven SPC560 backend needs no
+RAM loader or scratch buffer. Its injected PC is `0xFFFFC000` and the following
+fetch is `0xFFFFC004`, both inside the 16 KiB BAM ROM documented in
+[MPC5607B RM Table 3-1 and section 5.2](https://community.nxp.com/pwmxy87654/attachments/pwmxy87654/mpc5xxx/15469/1/MPC5607B_Reference_Manual.pdf).
+Only the injected instruction executes; GO does not include EX to resume ROM
+firmware. Before any memory access, two `e_ori r1,r31,1` operations must return
+their transformed operands in WBBR. This checks execution rather than accepting
+an echo of staged input. All new steps still reject ERR, with no retry. The z0h
+attach path also performs the second DBCR0 write required to initialize other
+fields after setting EDM, per
+[ST RM0046 section 36.14](https://www.st.com/resource/en/reference_manual/rm0046-spc560p34spc560p40-32bit-mcu-family-built-on-the-embedded-power-architecture-stmicroelectronics.pdf).
+
+Offline coverage now resolves instruction fetch before store effects, reproduces
+the old bootstrap failure, and exercises the real MPSSE/TAP/OnCE path with empty
+SRAM. Failed or stale self-tests must close the session before flash setup.
+GNU PowerPC disassembly independently confirmed the injected VLE opcodes.
+No physical target was accessed for this update. Successful SPC560 reading,
+writing and erasing still require hardware validation; this change addresses a
+bootstrap defect, not a proven diagnosis of every `OSR=0x309` failure.
+
 ## SPC560 debug entry and S-record input — 2026-10-25
 
 The reported `core 0 (TAP 0x11), OSR=0x309` has MCLK, ERR and DEBUG set,

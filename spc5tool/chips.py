@@ -50,6 +50,7 @@ class Chip:
     password_protocol: str = "censor64"
     watchdogs: tuple = (0xFFF38000,)
     buffering: tuple = ((0xC3F8801C, 0x19), (0xC3F88020, 1))
+    debug_instruction_base: int | None = None
 
 
 SPC560B64 = Chip(
@@ -63,6 +64,9 @@ SPC560B64 = Chip(
     has_jcomp=False,
     has_mmu=False,
     sram_base=0x40000000,
+    # MPC5607B RM Table 3-1 / section 5.2: 16 KiB VLE Boot Assist ROM.
+    # Both the injected PC and its following fetch stay inside this ROM.
+    debug_instruction_base=0xFFFFC000,
     flash_ctrl={"CFLASH": 0xC3F88000, "DFLASH": 0xC3F8C000, "SWT": 0xFFF38000},
     regions=(
         FlashRegion("CFLASH", 0x00000000, 0x00180000,
@@ -82,7 +86,7 @@ SPC560B64 = Chip(
     notes=(
         "No JCOMP pin: JTAGC always enabled.",
         "Single core: ACCESS_AUX_TAP_ONCE unambiguously targets the one core.",
-        "Memory access uses CPUSCR VLE instruction injection and scratch SRAM.",
+        "Memory access uses CPUSCR VLE injection with a Boot Assist ROM fetch; no scratch SRAM.",
     ),
 )
 

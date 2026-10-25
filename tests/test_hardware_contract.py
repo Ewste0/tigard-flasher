@@ -101,6 +101,22 @@ class HardwareContractTests(unittest.TestCase):
                     pass
             opened.return_value.close.assert_called_once()
 
+    def test_failed_once_selftest_stops_before_memory_or_flash_setup(self):
+        for result in (0x5AA5C33C, DriverError('OSR=0x309')):
+            with patch('spc5tool.session.MpsseTransport.open') as opened, \
+                 patch('spc5tool.session.JtagTap') as tap, \
+                 patch('spc5tool.session.OnCE') as once, \
+                 patch('spc5tool.session.Flash') as flash:
+                tap.return_value.read_idcode.return_value = 0x1234501D
+                once.return_value.step.side_effect = [result]
+                with self.assertRaises(DriverError):
+                    with TargetSession(SPC560B64):
+                        self.fail('failed instruction execution must stop the session')
+                once.return_value.step.assert_called_once_with(
+                    0x1BE1D001, 0x5AA5C33C, force_operand=True)
+                flash.assert_not_called()
+                opened.return_value.close.assert_called_once()
+
     def test_stuck_buffer_reports_register_and_stops_preparation(self):
         with patch('spc5tool.session.MpsseTransport.open') as opened, \
              patch('spc5tool.session.JtagTap') as tap, \
