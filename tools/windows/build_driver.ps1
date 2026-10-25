@@ -29,8 +29,12 @@ $config = $config -replace '(?m)^#define WDK_DIR .*$', '// No WinUSB coinstaller
 $config = $config -replace '(?m)^#define LIBUSB0_DIR .*$', ('#define LIBUSB0_DIR "' + $zeroDir + '"')
 $config = $config -replace '(?m)^#define LIBUSBK_DIR .*$', ('#define LIBUSBK_DIR "' + $kDir + '"')
 $config = $config -replace '(?m)^#define OPT_ARM.*$', '// This installer build targets x86/x64'
-$config = $config -replace '#define WDF_VER 1011', '#define WDF_VER 01009'
+$config = $config -replace '#define WDF_VER 1011', '#define WDF_VER 1009'
 Set-Content "$src/msvc/config.h" $config -Encoding utf8
+# libwdi's libusbK resource paths omit the leading zero used by the actual DLL
+# names. Keep WDF_VER decimal: it is also used in arithmetic for INF generation.
+$resources = "$src/libwdi/embedder_files.h"
+(Get-Content $resources -Raw).Replace('WdfCoInstaller" STR(WDF_VER)', 'WdfCoInstaller0" STR(WDF_VER)') | Set-Content $resources -Encoding utf8
 # Remove the ARM64 build dependency; the x86 helper embeds x64 installer support.
 $proj = "$src/libwdi/.msvc/libwdi_static.vcxproj"
 $xml = Get-Content $proj -Raw
