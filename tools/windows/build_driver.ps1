@@ -36,11 +36,16 @@ $proj = "$src/libwdi/.msvc/libwdi_static.vcxproj"
 $xml = Get-Content $proj -Raw
 $xml = $xml -replace '(?s)\s*<ProjectReference Include="installer_arm64.vcxproj">.*?</ProjectReference>', ''
 Set-Content $proj $xml -Encoding utf8
+$solution = "$src/libwdi.sln"
+Get-Content $solution | Where-Object {
+    $_ -notmatch '(?i)\{(?:6AC16F78-F266-4AE0-BD63-550A55F54C15|F7F7842F-2912-454E-ADF5-0B22987946E2)\}.*\.Build\.0\s*='
+} | Set-Content "$solution.updated" -Encoding utf8
+Move-Item "$solution.updated" $solution -Force
 Copy-Item "$PSScriptRoot/tigard_usb_driver.c" "$src/examples/wdi-simple.c"
 # Request elevation only for --install, from the setup script. --check is read-only.
 $project = "$src/examples/.msvc/wdi-simple.vcxproj"
 (Get-Content $project -Raw).Replace('RequireAdministrator', 'AsInvoker') | Set-Content $project -Encoding utf8
-& msbuild "$src/libwdi.sln" /t:wdi-simple /p:Configuration=Release /p:Platform=Win32 /m /v:minimal
+& msbuild $solution /t:Build /p:Configuration=Release /p:Platform=Win32 /m /v:minimal
 if ($LASTEXITCODE) { throw 'Driver helper build failed' }
 Copy-Item "$src/Win32/Release/examples/wdi-simple.exe" "$Output/tigard-usb-driver.exe"
 Copy-Item "$src/COPYING" "$Output/LIBWDI-COPYING.txt"
