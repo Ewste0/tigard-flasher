@@ -110,6 +110,79 @@ class WebTests(unittest.TestCase):
         self.assertIsNone(state["active"])
         self.assertFalse((Path(self.temp.name) / "states").exists())
 
+    def test_speed_write_and_erase_have_no_backup_or_verified_claim(self):
+        data = b'\xA5' * 8 + b'\xff' * (0x8000 - 8)
+        _, image = self.call('/api/files?name=speed.bin', data, raw=True)
+        for action in ('write', 'erase'):
+            payload = self.payload(action=action, length=0x8000, file_id=image['id'], speed_mode=True)
+            status, plan = self.call('/api/plan', payload)
+            self.assertEqual(status, 200, plan)
+            self.assertTrue(plan['speed_mode'])
+            self.assertFalse(plan['preserve'])
+            self.assertEqual(plan['backup_bytes'], 0)
+            self.assertEqual(plan['backup_ranges'], [])
+            with patch('spc5tool.flash.Flash.read', side_effect=AssertionError('unexpected array read')):
+                job = self.complete(payload)
+            self.assertEqual(job['status'], 'complete', job)
+            self.assertFalse(job['result']['verified'])
+            self.assertFalse(job['result']['backup_created'])
+            self.assertNotIn('backup', job['result'])
+            self.assertIn('no backup', job['result']['message'])
+        self.assertFalse(list(Path(self.temp.name).rglob('manifest.json')))
+        standard = self.call('/api/plan', self.payload(action='write', file_id=image['id']))[1]
+        self.assertFalse(standard['speed_mode'])
+        self.assertTrue(standard['preserve'])
+        self.assertEqual(standard['backup_bytes'], 0x8000)
+
+    def test_speed_invalid_requests_fail_before_backend(self):
+        _, image = self.call('/api/files?name=partial.bin', b'\xA5' * 8, raw=True)
+        requests = [self.payload(action='write', file_id=image['id'], speed_mode=True)]
+        requests += [self.payload(action='erase', length=0x8000, speed_mode=value) for value in (1, 'true', None)]
+        requests += [self.payload(action='read', speed_mode=True),
+                     self.payload('spc5748g', 'erase', address=0xFA8000, length=0x8000, speed_mode=True)]
+        requests += [self.payload(action='erase', address=a, length=n, speed_mode=True)
+                     for a, n in ((0x200000, 0x4000), (0x400000, 0x2000), (0xC00000, 0x2000))]
+        with patch.object(self.server.workspace, '_backend') as backend:
+            for payload in requests:
+                self.assertEqual(self.call('/api/plan', payload)[0], 400, payload)
+            backend.assert_not_called()
+
+    def test_speed_stop_and_controller_failure_never_report_complete(self):
+        from contextlib import contextmanager
+        from spc5tool.chips import SPC560B64
+        from spc5tool.flash import Flash
+        from tests.test_speed_c90 import NoArrayReads
+        from tests.test_batch_erase import lock_values
+        _, image = self.call('/api/files?name=speed-stop.bin',
+                             b'\xA5' * 16 + b'\xff' * (0x8000 - 16), raw=True)
+        workspace = self.server.workspace
+        for outcome in ('stop', 'failure'):
+            memory = NoArrayReads(SPC560B64)
+            locks = lock_values(memory)
+            execute = memory._execute
+            def interrupt(base, controller):
+                execute(base, controller)
+                if controller['mcr'] & 0x10:
+                    if outcome == 'stop':
+                        workspace.cancel_job(workspace.active)
+                    else:
+                        controller['mcr'] &= ~0x200
+            @contextmanager
+            def backend(plan, progress):
+                with patch.object(memory, '_execute', interrupt):
+                    yield Flash(memory, SPC560B64, progress=progress)
+            with patch.object(workspace, '_backend', backend):
+                job = self.complete(self.payload(action='write', file_id=image['id'], speed_mode=True))
+            self.assertEqual(job['status'], 'cancelled' if outcome == 'stop' else 'failed', job)
+            self.assertLess(job['progress'], 100)
+            self.assertNotIn('backup', job['result'])
+            self.assertNotEqual(job['result'].get('verified'), True)
+            self.assertEqual(len(memory.pulses), 2)
+            self.assertEqual(lock_values(memory), locks)
+            self.assertFalse(memory.controllers[0xC3F88000]['mcr'] & 0x15)
+            if outcome == 'stop':
+                self.assertIn('No backup was made', job['result']['message'])
+
     def test_all_targets_roundtrip_backup_verify_and_persistence(self):
         for target, address, blocksize in (("spc560b64", 0, 0x8000), ("spc5748g", 0xF90000, 0x4000), ("w25q128jv", 0, 4096)):
             with self.subTest(target=target):

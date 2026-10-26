@@ -1,5 +1,35 @@
 # Validation and scope
 
+## SPC560B64L3 Speed Write/Erase — 0.8.0, 2026-10-26
+
+The user requested speed without backups. Speed is limited to complete ordinary
+CFLASH/DFLASH blocks on SPC560B64L3. It removes backup, array blank checking and
+automatic final read-back verification. Controller success is not byte-for-byte
+verification; the result explicitly reports `verified: false`. Standard mode
+retains its previous checks and partial-image preservation. No OTP, SHADOW,
+password or other-profile operation uses Speed.
+
+[ST AN4194 section 2.1, steps 7–9](https://www.st.com/resource/en/application_note/an4194-flash-programming-for-spc560xxrpc560xx-spc56apxx-rpc56apxx-and-spc563m64xx-devices-stmicroelectronics.pdf)
+allows retaining PGM between double-word programming operations. Clear EHV
+after DONE/PEG, load the next interlock/data, then assert EHV again. Clear PGM
+at the end. The implementation follows that sequence and retains lock/selector
+read-back checks and instruction/controller errors. It always erases before
+programming; an all-FF input still erases, but sends no program pulses.
+
+Independent clocked OnCE and controller fixtures count 19 USB submissions and
+10 response reads per additional nonblank 8-byte unit, compared with 37/20 in
+Standard 0.7.9. Shared setup/cleanup and extra busy polls are excluded. Tests
+check CFLASH/DFLASH bytes across gaps and block boundaries, untouched neighbors,
+one grouped erase, restored locks, no array reads, retained PGM, FF skipping,
+timeouts, failed PEG/ECC status, disconnects, and safe Stop. USB loss prevents
+all further transport activity. API/CLI tests reject invalid ranges before
+opening a backend and distinguish unchecked completion, cancellation and errors.
+
+The UI defaults to Speed only for these main arrays. The API defaults to false
+and CLI requires `--speed`; partial BIN/S-record images must use Standard.
+Offline tests do not measure silicon erase/program time or prove live behavior.
+**A real SPC560B64L3 benchmark and read-back comparison remain outstanding.**
+
 ## SPC560 write result captures — 0.7.9, 2026-10-26
 
 The user identified the slow remote target as SPC560B64L3 at 5 MHz. The queued

@@ -18,8 +18,12 @@ Screenshot uses generated test bytes; no firmware or connected target is shown.
 
 - Read, patch write, program, verify, erase, and blank check for supported flash regions.
 - Selected ordinary MCU blocks erase together within each controller/region.
-  Logs separate backup, controller erase and full blank-check time. Write uses
+  Logs separate backup, controller erase and full blank-check time. Standard Write uses
   three full reads per changed block on all MCU profiles; SHADOW remains separate.
+- SPC560B64L3 **Speed** Write/Erase is the UI default for CFLASH/DFLASH: no backup,
+  array blank check or automatic verification. Complete erase blocks only; Write
+  erases once, skips FF-only 8-byte units and keeps PGM set between pulses.
+  Controller status and safe Stop remain checked; manual Verify stays available.
 - 5 MHz interface clock by default; lower clocks remain selectable.
 - SPC560 OnCE register transactions combine their JTAG scans into one USB
   submission, retaining the status check after every CPU instruction. Writes
@@ -46,8 +50,8 @@ Screenshot uses generated test bytes; no firmware or connected target is shown.
   keep Stop available after modifications start: the current flash pulse and
   lock restoration finish first. SHADOW rebuilding finishes before stopping.
 - Interactive Tigard/14-pin/10-pin/SPI wiring guides, USB presence, and target identification.
-- Reviewed write plans, original-block backups (OTP: affected units) with checksums, preserved bytes outside
-  a patch, and automatic verification.
+- Reviewed write plans; Standard mode includes original-block backups (OTP:
+  affected units) with checksums, preserved bytes outside a patch, and automatic verification.
 
 | Profile | Main and data flash | Additional regions |
 | --- | --- | --- |
@@ -155,6 +159,10 @@ for already-erased flash; alignment is 8 bytes on SPC560/MPC5748 and 16 bytes on
 SPC58H. `erase` requires whole blocks and cannot erase OTP. SHADOW erase restores
 its security/boot configuration tail before returning; only its user area is left blank.
 
+For SPC560B64L3 full-block CFLASH/DFLASH replacement, add `--speed` to Write or
+Erase and omit `--backup`. Execution still requires `--execute --expect-idcode`.
+The API uses `speed_mode: true`; omitted/false retains Standard behavior.
+
 For OTP, select its region and use **Program once** after loading the image.
 The tool checks the input range, saves the affected OTP units, requires erased input
 units, programs, and verifies. **Blank check** means every requested byte reads FF;
@@ -195,7 +203,7 @@ compare a Config dump with a standard read first. The session log reports actual
 read time, throughput and any fallback to polling.
 See [read-performance validation](docs/VALIDATION.md#queued-cflash-bench-validation--2026-10-22).
 
-To replace an image, use **Write** directly: it backs up the affected blocks,
+To replace an image, use **Write** directly. **Standard** backs up affected blocks,
 skips unchanged blocks, erases changed blocks, programs and verifies them.
 MPC5748 queued Write reuses its erase blank check and verifies each complete
 rebuilt block once at the end, including preserved bytes outside the image.
@@ -211,11 +219,26 @@ progress is weighted work, not a time estimate: ordinary Write's first 20% is
 backup, followed by erase/blank check (20–40%), programming (40–80%) and final
 verification (80–100%). A reading of 13% does not mean 13% of the image is written.
 
+For SPC560B64L3 CFLASH/DFLASH the UI instead defaults to **Speed**. It omits all
+three full-array read passes: backup, blank check and final verification. Write
+always erases the selected blocks first, even for an all-FF image, then programs
+only non-FF 8-byte units. Images must cover complete erase blocks; partial BIN
+or S-record segments require Standard. No automatic padding or preservation is
+performed in Speed mode. Choose **Verify** separately for a byte comparison.
+
+Speed keeps PGM set between units and checks DONE/PEG/errors before clearing EHV
+and loading the next unit. The wire/controller tests count 19 USB writes and
+10 response reads per additional programmed unit, versus 37/20 in Standard.
+This remains host-driven programming, without a RAM loader or a live timing
+benchmark. Speed progress reserves 0–10% for erase and 10–100% for non-FF bytes
+to program; it is not an ETA. The log records erase/program time and skipped FF.
+
 **Stop** remains available during MCU Write, Erase and Program. It waits for the
 active pulse to finish and restores volatile locks. Stop during SHADOW waits
 for the protected rebuild to finish; password installation and SPI modification
 remain non-cancellable. Cancellation never resumes/resets the MCU or reports
-successful verification. The backup stays available to download.
+successful verification. Standard mode keeps the backup available to download;
+Speed makes no backup and requires the intended complete-block image to retry.
 
 After a stop during modification, Flash may contain erased or partially written
 blocks. This is not rollback or automatic resume. Restore complete affected

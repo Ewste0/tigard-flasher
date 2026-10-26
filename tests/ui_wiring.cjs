@@ -115,6 +115,16 @@ async function main() {
           await page.setViewport({width:1440, height:1200});
         }
         await page.select("#chipSelect", "spc560b64");
+        assert.equal(await page.$eval('#speedOptions', n => n.hidden), false);
+        assert.equal(await page.$eval('#writeMode', n => n.value), 'speed');
+        assert.match(await page.$eval('#operationPolicy', n => n.textContent), /no backup/);
+        assert.equal(await page.evaluate(() => request('write').speed_mode), true);
+        assert.equal(await page.evaluate(() => request('erase').speed_mode), true);
+        assert.equal(await page.evaluate(() => request('verify').speed_mode), false);
+        await page.select('#writeMode', 'standard');
+        assert.equal(await page.evaluate(() => request('write').speed_mode), false);
+        assert.match(await page.$eval('#operationPolicy', n => n.textContent), /Automatic backup/);
+        await page.select('#writeMode', 'speed');
         await page.click("#settingsButton");
         assert.equal(await page.$eval("#readModeSelect", n => n.disabled), true);
         assert.equal(await page.$eval("#readDelayUs", n => n.disabled), true);
@@ -128,6 +138,8 @@ async function main() {
         if (reset === "trst") await page.screenshot({path:path.join(screenshots,"spc560-10pin.png"),fullPage:true});
         assert.equal(await page.$$eval("#targetConnector .wire-jcomp", nodes => nodes.length), 0);
         await page.select("#chipSelect", "spc58nh92");
+        assert.equal(await page.$eval('#speedOptions', n => n.hidden), true);
+        assert.equal(await page.evaluate(() => request('erase').speed_mode), false);
         assert.equal(await page.evaluate(() => request("read").fast_read), false);
         assert.equal(await page.$eval("#currentPassword", node => node.disabled), true);
         assert.equal(await page.$eval('[data-operation="authenticate"]', node => node.disabled), true);
@@ -177,6 +189,8 @@ async function main() {
         await page.select("#chipSelect", "spc560b64");
         assert.equal(await page.$eval("#currentPassword", node => node.maxLength), 16);
         await page.click('[name="region"][value="CFLASH_OTP"]');
+        assert.equal(await page.$eval('#speedOptions', n => n.hidden), true);
+        assert.equal(await page.evaluate(() => request('program').speed_mode), false);
         assert.equal(await page.$eval('[data-operation="erase"]', node => node.disabled), true);
         assert.equal(await page.$eval('[data-operation="write"]', node => node.disabled), true);
         assert.equal(await page.$eval('[data-operation="program"]', node => node.disabled), false);
@@ -198,6 +212,20 @@ async function main() {
         assert.equal(await page.$eval('[data-operation="write"]', node => node.disabled), false);
         assert.equal(await page.$("#demoButton"), null);
         assert.equal(await page.$("#modeSelect"), null);
+        await page.click('[data-operation="erase"]');
+        await page.waitForSelector('#confirmDialog[open]');
+        assert.match(await page.$eval('#planNote', n => n.textContent), /No backup, blank check or automatic Verify/);
+        assert.doesNotMatch(await page.$eval('#planNote', n => n.textContent), /backed up before erasing/);
+        assert.equal(await page.evaluate(() => pendingPlan.backup_bytes), 0);
+        await page.click('#confirmDialog .dialog-actions button[value="cancel"]');
+        await page.click('#bufferTab');
+        for (const width of [1440, 480]) {
+          await page.setViewport({width, height:1000});
+          await page.$eval('#speedOptions', n => n.scrollIntoView({block:'center'}));
+          assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+          if (reset === 'srst') await page.screenshot({path:path.join(screenshots,`spc560-speed-${width}.png`)});
+        }
+        await page.setViewport({width:1440, height:1200});
         await page.select("#familySelect", "spi");
         assert.equal(await page.$eval('[data-operation="program"]', node => node.hidden && node.disabled), true);
         assert.equal(await page.$eval("#targetConnector", node => node.children.length), 8);

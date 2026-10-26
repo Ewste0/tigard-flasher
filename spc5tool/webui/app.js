@@ -74,6 +74,10 @@ function log(text, level = "INFO", timestamp = Date.now()) {
   $("logCount").textContent = `${++eventCount} events`;
 }
 function controls() {
+  $("speedOptions").hidden = !speedAvailable();
+  $("writeMode").disabled = !ready || busy;
+  $("operationPolicy").textContent = speedAvailable() && $("writeMode").value === "speed"
+    ? "Speed · no backup / auto-verify" : "Automatic backup & verification";
   $("imageSegment").disabled = !ready || busy;
   for (const button of document.querySelectorAll("[data-operation]")) {
     const action = button.dataset.operation;
@@ -91,6 +95,9 @@ function controls() {
   for (const input of document.querySelectorAll(".region-option input, .block-card")) input.disabled = busy;
   $("saveButton").disabled = !file || busy;
   $("jumpButton").disabled = !viewBytes;
+}
+function speedAvailable() {
+  return target?.key === "spc560b64" && region?.kind === "flash" && ["CFLASH", "DFLASH"].includes(region.name);
 }
 function setBusy(value) { busy = value; controls(); }
 function setFamily() {
@@ -396,6 +403,7 @@ function request(action) {
     $("saveName").value = file.name.replace(/\.[^.]+$/, ".bin");
   }
   return {target:target.key, action, mode, frequency, expected_id:expectedId || null,
+    speed_mode:speedAvailable() && $("writeMode").value === "speed" && ["write", "erase"].includes(action),
     ...(adapterState ? {adapter_revision:adapterState.revision} : {}),
     fast_read:fastRead && frequency >= 100000 && ["read", "write", "program", "erase", "verify", "blank"].includes(action) && target.key === "spc5748g" && document.querySelector('input[name="region"]:checked')?.value === "CFLASH",
     read_delay_us:readDelayUs,
@@ -423,6 +431,7 @@ function review(plan) {
   $("planDetails").replaceChildren(...values.map(([label, value]) => { const row = document.createElement("div"); const dt = document.createElement("dt"); dt.textContent = label; const dd = document.createElement("dd"); dd.textContent = value; row.append(dt, dd); return row; }));
   $("planNote").textContent = plan.action === "write" ? "Full affected blocks are backed up before erasing. Bytes outside the image are preserved. Written data is verified automatically." : "Selected blocks are backed up before erasing, then checked for blank bytes. The backup will be available to download.";
   if (["program", "install_password"].includes(plan.action)) $("planNote").textContent = plan.blocks.some(b => b.kind === "shadow") && plan.action === "install_password" ? "Back up SHADOW, preserve configuration, erase and rebuild it with the new password, then verify." : "Back up first, program erased ECC units, then verify. No erase is performed.";
+  if (plan.speed_mode) $("planNote").textContent = "Speed mode replaces complete selected blocks. No backup, blank check or automatic Verify. Flash controller status remains checked.";
   $("planNote").textContent += " " + (plan.notes || []).join(" ");
   $("confirmRun").textContent = `Run ${plan.action}`;
   $("confirmDialog").showModal();
@@ -547,6 +556,12 @@ $("saveButton").addEventListener("click", async () => {
   } catch (error) { message(error); } finally { setBusy(false); }
 });
 $("readScope").addEventListener("change", () => applyPreset($("readScope").value));
+$("writeMode").addEventListener("change", () => {
+  controls();
+  log($("writeMode").value === "speed"
+    ? "SPC560 Speed Write/Erase: no backup, blank check or automatic Verify. Complete erase blocks only."
+    : "SPC560 standard Write/Erase: backup and verification enabled.");
+});
 $("stopRead").addEventListener("click", async () => {
   if (!activeJob) return;
   $("stopRead").disabled = true;

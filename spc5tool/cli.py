@@ -12,7 +12,7 @@ from .errors import DriverError
 from .files import save_backup, write_new, sha256
 from .images import decode_image, MAX_UPLOAD, SREC_SUFFIXES
 from .flash import Flash
-from .geometry import Block, backup_blocks, blocks_for, select_blocks, validate_program_range, erase_groups
+from .geometry import Block, backup_blocks, blocks_for, select_blocks, validate_program_range, erase_groups, speed_blocks
 from .idcode import read_idcode
 from .mpsse import MpsseTransport, DEFAULT_URL, DEFAULT_FREQUENCY
 from .session import TargetSession
@@ -130,6 +130,13 @@ def _operation(args):
         raise ValueError("Read saves raw binary; use a .bin filename")
     size = len(data) if data is not None else args.length
     blocks = _blocks(args, args.address, size, whole=args.action == "erase")
+    speed_mode = getattr(args, "speed", False)
+    if speed_mode:
+        if args.spi or args.action not in ("write", "erase"):
+            raise ValueError("Speed mode is only for SPC560B64L3 Write/Erase")
+        blocks = speed_blocks(chips.get(args.chip), args.address, size)
+        if args.backup:
+            raise ValueError("--speed does not create backups; omit --speed to use --backup")
     if getattr(args, "fast_read", False) is None:
         args.fast_read = (not args.spi and args.chip == "spc5748g" and args.action in ("read", "write", "program", "erase", "verify", "blank")
                           and args.freq >= 100000 and all(b.region == "CFLASH" for b in blocks))
@@ -143,9 +150,14 @@ def _operation(args):
             validate_program_range(chips.get(args.chip), args.address, size)
     backups = (backup_blocks(chips.get(args.chip), args.address, size)
                if not args.spi and args.action == "program" else blocks)
+    if speed_mode:
+        backups = ()
     plan = {"target": args.chip, "operation": args.action, "address": f"0x{args.address:08x}",
             "bytes": size, "blocks": [{"name": b.name, "address": f"0x{b.address:08x}", "size": b.size} for b in blocks],
-            "preserve_outside_image": args.action == "write", "hardware_validated": False}
+            "preserve_outside_image": args.action == "write" and not speed_mode,
+            "speed_mode": speed_mode, "hardware_validated": False}
+    if speed_mode:
+        plan["speed_note"] = "No backup, array blank check or automatic read-back verification. Complete erase blocks only; FF units are skipped."
     if args.action in MUTATING:
         plan["backup_ranges"] = [{"address": f"0x{b.address:08x}", "size": b.size} for b in backups]
     if not args.spi and args.action == "erase":
@@ -163,9 +175,9 @@ def _operation(args):
         emit(plan)
         return 0
     if args.action in MUTATING:
-        if not args.backup:
+        if not speed_mode and not args.backup:
             raise ValueError("--execute requires --backup NEW_DIRECTORY before modifying flash")
-        if Path(args.backup).exists():
+        if not speed_mode and Path(args.backup).exists():
             raise ValueError("backup directory already exists; use a new path")
         if not args.spi and args.expect_idcode is None:
             raise ValueError("live modification requires --expect-idcode from your earlier IDCODE probe")
@@ -188,9 +200,15 @@ def _operation(args):
         elif args.action == "blank":
             flash.verify(args.address, b"\xff" * size)
         elif args.action == "write":
-            flash.patch(args.address, data, backup)
+            if speed_mode:
+                flash.write_speed(args.address, data)
+            else:
+                flash.patch(args.address, data, backup)
             if isinstance(flash, Flash) and flash.write_stats is not None:
                 plan["write_stats"] = flash.write_stats
+        elif args.action == "erase" and speed_mode:
+            flash.erase_speed(args.address, size)
+            plan["erase_stats"] = flash.erase_stats
         elif args.action in ("erase", "program"):
             backup_started = time.monotonic()
             backup([(b, flash.read(b.address, b.size)) for b in backups])
@@ -204,7 +222,10 @@ def _operation(args):
     plan["executed"] = True
     plan["mode"] = "hardware"
     if args.action in MUTATING or args.action in ("verify", "blank"):
-        plan["verified"] = True
+        plan["verified"] = not speed_mode
+    if speed_mode:
+        plan["controller_checked"] = True
+        plan["backup_created"] = False
     emit(plan)
     return 0
 
@@ -321,6 +342,8 @@ def _commands(sub, spi=False):
         if action in MUTATING:
             p.add_argument("--execute", action="store_true", help="perform operation; otherwise only print plan")
             p.add_argument("--backup", type=Path, help="new directory for affected-block backups (OTP: touched ECC units only) and SHA-256 manifest")
+        if not spi and action in ("write", "erase"):
+            p.add_argument("--speed", action="store_true", help="SPC560B64L3 complete CFLASH/DFLASH blocks: no backup, blank check or read-back verify; skip FF and retain PGM between pulses")
         p.set_defaults(func=_operation, action=action)
         if action not in MUTATING:
             p.set_defaults(execute=False, backup=None)
@@ -362,7 +385,9 @@ def main(argv=None):
         print(f"error: {exc}", file=sys.stderr)
         return 2
     except KeyboardInterrupt:
-        print("interrupted; flash may be partial. Keep the backup and reconnect before retrying.", file=sys.stderr)
+        detail = ("Speed mode made no backup; rewrite complete intended blocks."
+                  if getattr(args, "speed", False) else "Keep the backup and reconnect before retrying.")
+        print(f"interrupted; flash may be partial. {detail}", file=sys.stderr)
         return 130
 
 

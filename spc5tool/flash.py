@@ -4,7 +4,7 @@ import math
 from contextlib import contextmanager
 
 from .errors import DriverError, NexusBusError, OperationTimeout, VerificationError
-from .geometry import select_blocks, validate_program_range, erase_groups
+from .geometry import select_blocks, validate_program_range, erase_groups, speed_blocks
 from .mpsse import MpsseError
 
 DONE, PEG, PGM, ERS, EHV = 0x400, 0x200, 0x10, 4, 1
@@ -241,12 +241,13 @@ class Flash:
         blocks = select_blocks(self.chip, address, size, whole=True)
         self._erase_blocks(blocks)
 
-    def _erase_blocks(self, blocks):
+    def _erase_blocks(self, blocks, *, blank_check=True):
         """Internal whole-block erase, including sparse changed blocks in Write.
 
         All selected ordinary blocks of a controller/region share one EHV
         operation. Only their geometry masks are combined; gaps remain intact.
-        A successful PEG still requires a full blank check of every block.
+        Standard operations require a full blank check. Explicit Speed mode
+        omits array reads and reports controller completion without verification.
         """
         self._require_writable()
         self._check_blocks(blocks, erase=True)
@@ -282,6 +283,10 @@ class Flash:
                     self.memory.write32(block.address, 0xFFFFFFFF)
             stats["erase_seconds"] += time.monotonic() - started
             self.checkpoint()  # EHV/ERS cleared and original locks restored.
+            if not blank_check:
+                self.progress("controller erase", round(end, 12), 1)
+                done += size
+                continue
             # Restore volatile locks before the read-only full blank check.
             # Never read across unselected holes in a sparse Write selection.
             checked, started = 0, time.monotonic()
@@ -293,6 +298,79 @@ class Flash:
             stats["blank_check_seconds"] += time.monotonic() - started
             self.progress("erase and blank check", round(end, 12), 1)
             done += size
+
+    def erase_speed(self, address, size):
+        """Controller-checked erase, without backup or array blank checking."""
+        blocks = speed_blocks(self.chip, address, size)
+        self._erase_blocks(blocks, blank_check=False)
+
+    def write_speed(self, address, data):
+        """Replace complete SPC560B64 blocks; no backup, array reads or verify.
+
+        Always erase first, including FF-only images. A previous session's
+        blank-looking data does not prove unused ECC. No preserved bytes exist
+        outside this image inside its selected erase blocks.
+        """
+        blocks = speed_blocks(self.chip, address, len(data))
+        stats = self.write_stats = dict(image_bytes=len(data), program_bytes=0,
+                                       skipped_ff_bytes=0, program_seconds=0.0,
+                                       erase_seconds=0.0, verified=False, backup=False)
+        started = time.monotonic()
+        with self.stage("controller erase", 0, 0.1):
+            self._erase_blocks(blocks, blank_check=False)
+        stats["erase_seconds"] = time.monotonic() - started
+        stats["erase_batches"] = self.erase_stats["batches"]
+        started = time.monotonic()
+        with self.stage("program non-FF bytes", 0.1, 1):
+            stats["program_bytes"], stats["skipped_ff_bytes"] = self._program_c90_stream(address, data, blocks)
+        stats["program_seconds"] = time.monotonic() - started
+
+    def _program_c90_stream(self, address, data, blocks):
+        """AN4194 §2.1 steps 7–9: EHV falls between units; PGM stays set.
+
+        Only write_speed(), after same-session controller-checked erase, calls
+        this helper. Each instruction and each pulse still gets its status
+        check before the next unit. Stop runs with EHV clear, then cleanup
+        clears PGM and restores locks before returning to the caller.
+        """
+        expected = speed_blocks(self.chip, address, len(data))
+        if tuple(blocks) != tuple(expected):
+            raise ValueError("Speed programming blocks do not match the image")
+        unit, blank = 8, b"\xff" * 8
+        total = sum(unit for n in range(0, len(data), unit) if data[n:n + unit] != blank)
+        if not total:
+            self.checkpoint()
+            self.progress("all FF; no program pulses", 1, 1)
+            return 0, len(data)
+        base = blocks[0].controller
+        done = 0
+        with self._unlocked(blocks):
+            self._idle(base)
+            self.memory.write32(base, ERRORS)
+            try:
+                self.memory.write32(base, PGM)
+                for offset in range(0, len(data), unit):
+                    self.checkpoint()  # EHV is clear; finally closes PGM on Stop.
+                    word = data[offset:offset + unit]
+                    if word == blank:
+                        continue
+                    self.memory.write32(address + offset, int.from_bytes(word[:4], "big"))
+                    self.memory.write32(address + offset + 4, int.from_bytes(word[4:], "big"))
+                    self.memory.write32(base, PGM | EHV)
+                    status = self._wait_done(base)
+                    if not status & PEG or status & ERRORS:
+                        raise DriverError(f"flash program failed at 0x{address + offset:08x}: MCR=0x{status:08x}")
+                    self.memory.write32(base, PGM)  # Finish this pulse; next write latches a new address.
+                    done += unit
+                    self.progress("program non-FF bytes", done, total)
+                    self.checkpoint()
+            except MpsseError:
+                self.poisoned = True
+                raise
+            finally:
+                if not self.poisoned:
+                    self._finish(base, PGM)
+        return done, len(data) - done
 
     def program(self, address, data):
         validate_program_range(self.chip, address, len(data))

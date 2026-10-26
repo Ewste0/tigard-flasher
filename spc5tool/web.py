@@ -21,7 +21,7 @@ from .errors import DriverError
 from .files import save_backup, sha256, write_new
 from .images import decode_image, MAX_IMAGE, MAX_UPLOAD, SREC_SUFFIXES
 from .flash import Flash
-from .geometry import Block, backup_blocks, blocks_for, select_blocks, validate_program_range, erase_groups
+from .geometry import Block, backup_blocks, blocks_for, select_blocks, validate_program_range, erase_groups, speed_blocks
 from .idcode import read_idcode
 from .mpsse import DEFAULT_URL, DEFAULT_FREQUENCY, MpsseTransport
 from .session import TargetSession
@@ -234,6 +234,11 @@ class Workspace:
             raise ValueError("unsupported target")
         if action not in ACTIONS or mode != "hardware":
             raise ValueError("unsupported operation or mode; live hardware only")
+        speed_mode = request.get("speed_mode", False)
+        if type(speed_mode) is not bool:
+            raise ValueError("speed_mode must be a boolean")
+        if speed_mode and (target != "spc560b64" or action not in ("write", "erase")):
+            raise ValueError("Speed mode is only for SPC560B64L3 Write/Erase")
         if target in chips.CHIPS and chips.CHIPS[target].read_only and action in MUTATING:
             raise ValueError("Selected target is a read-only profile")
         frequency = number(request.get("frequency", self.frequency), "frequency", 30_000_000)
@@ -316,21 +321,29 @@ class Workspace:
         if "fast_read" not in request:
             fast_read = (target == "spc5748g" and action in ("read", "write", "program", "erase", "verify", "blank") and frequency >= 100000
                          and bool(blocks) and all(b.region == "CFLASH" for b in blocks))
+        if speed_mode:
+            blocks = speed_blocks(chips.CHIPS[target], address, size)
         backups = (backup_blocks(chips.CHIPS[target], address, size)
                    if target in chips.CHIPS and action in ("program", "install_password") else blocks)
+        if speed_mode:
+            backups = ()
         filename = safe_filename(request.get("filename") or f"{target}-{address:08x}-{mode}.bin")
         if action == "read" and Path(filename).suffix.lower() in SREC_SUFFIXES:
             raise ValueError("Read saves raw binary; use a .bin filename")
         plan = {"id": uuid.uuid4().hex, "target": target, "action": action, "mode": mode,
                 "address": address, "length": size, "frequency": frequency, "expected_id": expected,
-                "fast_read": fast_read, "read_delay_us": read_delay_us,
+                "fast_read": fast_read, "read_delay_us": read_delay_us, "speed_mode": speed_mode,
                 "file_id": file_id if info else None, "image": info,
                 "image_offset": image_offset, "segment": segment_index,
                 "blocks": [asdict(b) for b in blocks], "backup_bytes": sum(b.size for b in backups),
                 "backup_ranges": [asdict(b) for b in backups],
-                "preserve": action == "write", "filename": filename}
+                "preserve": action == "write" and not speed_mode, "filename": filename}
         plan["password_slot"] = slot if action == "install_password" else None
         plan["notes"] = []
+        if speed_mode:
+            plan["notes"].append("Speed mode: complete CFLASH/DFLASH erase blocks only. No backup, array blank check or automatic read-back verification. Controller completion/errors remain checked. Use Verify separately when needed.")
+            if action == "write":
+                plan["notes"].append("Erase the complete selected range, then program non-FF 8-byte units with PGM retained between pulses. Progress counts programmed non-FF bytes; FF units are skipped.")
         if segment_index is not None:
             plan["notes"].append(f"S-record segment {segment_index + 1}/{len(info['segments'])}, using its original address. Only this segment is selected; gaps and other segments are not programmed.")
         if fast_read:
@@ -344,8 +357,9 @@ class Workspace:
             plan["notes"].append("SHADOW erase preserves the configuration tail at +0x3DD0. Writing validates the censorship words before erasing.")
         if target in chips.CHIPS and action == "erase":
             plan["erase_batches"] = len(erase_groups(blocks))
-            plan["notes"].append(f"{len(blocks)} selected blocks in {plan['erase_batches']} controller erase operation(s), followed by a full blank check. Backup completes first.")
-        if action == "write" and target in chips.CHIPS and all(b.kind == "flash" for b in blocks):
+            plan["notes"].append(f"{len(blocks)} selected blocks in {plan['erase_batches']} controller erase operation(s)." +
+                                 ("" if speed_mode else " Followed by a full blank check. Backup completes first."))
+        if action == "write" and not speed_mode and target in chips.CHIPS and all(b.kind == "flash" for b in blocks):
             plan["notes"].append("Back up every affected block, erase changed blocks together, then program and verify complete rebuilt blocks. Unchanged blocks are preserved and verified.")
         if action == "install_password":
             plan["notes"].append("Installs the password only; existing censorship, lifecycle and DCF settings are preserved. This does not enable protection on an unprotected chip.")
@@ -435,6 +449,9 @@ class Workspace:
             with self.lock:
                 if job.get("cancellable") and job.get("cancel_requested"):
                     if job["modification_started"]:
+                        if plan.get("speed_mode"):
+                            raise ReadCancelled("Speed operation stopped at a flash checkpoint. Flash may be partially erased or programmed. "
+                                                "No backup was made and read-back was not verified. Rewrite complete intended blocks before use.")
                         recovery = ("OTP changes cannot be undone. Verify the affected units and program only remaining erased units."
                                     if any(b["kind"] == "otp" for b in plan["blocks"]) else
                                     "Restore complete affected blocks using the backup or intended full-block image, including preserved bytes, then verify before use.")
@@ -548,6 +565,16 @@ class Workspace:
                     elif action == "blank":
                         flash.verify(plan["address"], b"\xff" * plan["length"])
                         result["message"] = "Blank check passed. Every byte in the selected range is FF."
+                    elif action == "write" and plan["speed_mode"]:
+                        self._log(job, "Speed Write: no backup, blank check or final read-back. Erase whole selected blocks, then program non-FF units. A separate Erase is unnecessary.")
+                        flash.write_speed(plan["address"], data)
+                        result.update(speed_mode=True, verified=False, backup_created=False,
+                                      write_stats={k: round(v, 3) if isinstance(v, float) else v
+                                                   for k, v in flash.write_stats.items()})
+                        stats = result["write_stats"]
+                        self._log(job, f"Speed Write: erase {stats['erase_seconds']:.2f} s; program {stats['program_seconds']:.2f} s. "
+                                  f"Programmed {stats['program_bytes']:,} bytes; skipped {stats['skipped_ff_bytes']:,} FF bytes.")
+                        result["message"] = "Speed Write complete. Controller checks passed; no backup or read-back verification was performed."
                     elif action == "write":
                         if isinstance(flash, Flash) and all(b["kind"] == "flash" for b in plan["blocks"]):
                             self._log(job, "Write: backup, grouped erase with blank check, program, then one full-block verification. A separate Erase is unnecessary.")
@@ -582,6 +609,13 @@ class Workspace:
                     elif action == "install_password":
                         provision(flash, self._plan_secrets[plan["id"]]["new"], backup, slot=plan["password_slot"])
                         result["message"] = installation_message(chips.CHIPS[target])
+                    elif action == "erase" and plan["speed_mode"]:
+                        self._log(job, f"Speed Erase: {len(plan['blocks'])} blocks in {plan['erase_batches']} controller operation(s), without backup or array blank check.")
+                        flash.erase_speed(plan["address"], plan["length"])
+                        result.update(speed_mode=True, verified=False, backup_created=False,
+                                      erase_stats={k: round(v, 3) if isinstance(v, float) else v
+                                                   for k, v in flash.erase_stats.items()})
+                        result["message"] = "Speed Erase complete. Controller checks passed; no backup or array blank check was performed."
                     elif action == "erase":
                         blocks = [Block(**b) for b in plan["blocks"]]
                         originals = []

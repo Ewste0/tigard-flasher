@@ -42,6 +42,19 @@ def backup_blocks(chip, address, size):
                  if b.kind == "otp" else b for b in blocks)
 
 
+def speed_blocks(chip, address, size):
+    """Explicit no-backup/no-verify policy for complete SPC560B64 main blocks."""
+    if chip.key != "spc560b64" or chip.algorithm != "c90-b":
+        raise ValueError("Speed mode is available only for SPC560B64L3 CFLASH/DFLASH")
+    blocks = select_blocks(chip, address, size)
+    if blocks[0].address != address or blocks[-1].end != address + size:
+        raise ValueError("Speed mode requires complete erase blocks. Select Standard for a partial image; no padding is added automatically.")
+    if (any(b.kind != "flash" or not b.writable or b.region not in ("CFLASH", "DFLASH") for b in blocks)
+            or len({b.controller for b in blocks}) != 1):
+        raise ValueError("Speed mode requires one ordinary CFLASH/DFLASH region; SHADOW and OTP are excluded")
+    return blocks
+
+
 def blocks_for(chip):
     blocks = []
     if chip.algorithm == "c90-b":

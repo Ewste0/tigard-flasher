@@ -192,3 +192,17 @@ class OnceTransferTests(unittest.TestCase):
             self.assertEqual(traffic[0][index][2], traffic[1][index][2])
         per_unit = [(m[1][0] - m[0][0], m[1][1] - m[0][1]) for m in traffic]
         self.assertEqual(per_unit, [(51, 34), (37, 20)])
+
+    def test_speed_stream_halves_per_unit_response_roundtrips(self):
+        counts = []
+        for size in (8, 16):
+            io, memory = self.setup_memory()
+            controller = SimMemory(SPC560B64)
+            io.tgt.read_word = controller.read32
+            io.tgt.write_word = controller.write32
+            image = b'\xA5' * size + b'\xff' * (0x8000 - size)
+            Flash(memory, SPC560B64).write_speed(0, image)
+            counts.append((io.writes, io.reads))
+            self.assertEqual(controller.regions[0][:0x8000], image)
+            self.assertFalse(controller.controllers[0xC3F88000]['mcr'] & 0x15)
+        self.assertEqual(tuple(b - a for a, b in zip(*counts)), (19, 10))

@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.8.0 — 2026-10-26
+
+- Add SPC560B64L3 Speed Write/Erase for complete CFLASH/DFLASH erase blocks,
+  selected by default in the UI. Omit backups, full blank scans and automatic
+  read-back verification; leave manual Verify available. Standard mode retains
+  partial-image preservation, backups and verification. API/CLI remain Standard
+  unless `speed_mode: true` / `--speed` is supplied.
+- Erase all selected blocks together; Write erases first and skips FF-only
+  8-byte units. Keep PGM set between programming pulses per ST AN4194 2.1,
+  while checking every CPU instruction and each controller completion/error.
+  Offline marginal traffic falls from 37 USB writes / 20 reads to 19 / 10.
+- Retain Stop after pulse completion and restore volatile locks. Reject partial
+  images, SHADOW, OTP and other profiles before USB access. Speed results say
+  explicitly that no backup or read-back verification was performed.
+- Add controller, USB traffic, failure, Stop, API/CLI and browser regressions.
+  Progress counts non-FF programming bytes; logs split erase/program timings.
+  Real-device timing remains unmeasured; no target-resident loader was added.
+
 ## 0.7.9 — 2026-10-26
 
 - Reduce SPC560 write overhead by omitting unused 192-bit CPUSCR result reads

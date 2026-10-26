@@ -26,7 +26,7 @@
     <button data-operation="verify" data-icon="check" disabled>Verify</button>
     <span class="divider"></span><button data-operation="erase" data-icon="eraser">Erase</button>
     <button data-operation="blank" data-icon="square">Blank check</button>
-    <span class="toolbar-spacer"></span><span class="auto-verify" data-icon="shield">Automatic backup &amp; verification</span>
+    <span class="toolbar-spacer"></span><span class="auto-verify" data-icon="shield"><span id="operationPolicy">Automatic backup &amp; verification</span></span>
   </div>
   <main>
     <aside class="sidebar">
@@ -68,6 +68,7 @@
         <div class="workspace-heading"><div><span class="eyebrow">FLASH WORKSPACE</span><h1 id="workspaceTitle">Binary buffer</h1></div><div class="view-tabs" role="tablist" aria-label="Workspace view"><button id="bufferTab" role="tab" aria-selected="true" aria-controls="bufferView">Buffer</button><button id="mapTab" role="tab" aria-selected="false" aria-controls="mapView">Memory map</button><button id="wiringTab" role="tab" aria-selected="false" aria-controls="wiringView">Wiring</button></div></div>
         <div class="read-options"><div><label for="readScope">Read selection</label><select id="readScope"><option value="custom">Custom range</option></select></div><div class="save-name"><label for="saveName">Save filename</label><input id="saveName" maxlength="100" placeholder="My_dump.bin" spellcheck="false"></div><span id="profileNote"></span></div>
         <div class="range-bar"><div><label for="addressInput">START ADDRESS</label><input id="addressInput" value="0x00000000" spellcheck="false"></div><span class="range-arrow">→</span><div><label for="lengthInput">READ / ERASE LENGTH</label><input id="lengthInput" value="0x8000" spellcheck="false"></div><button id="regionRange" data-icon="expand">Use region</button><span id="rangeHint">32 KiB selected</span></div>
+        <div id="speedOptions" class="speed-options" hidden><div><label for="writeMode">SPC560B64L3 WRITE / ERASE</label><select id="writeMode"><option value="speed" selected>Speed · no backup or verification</option><option value="standard">Standard · backup, preserve and verify</option></select></div><p class="field-note">Speed replaces complete erase blocks, skips FF units and checks controller status. No backup, blank check or automatic read-back. Verify remains available separately.</p></div>
         <div id="bufferView" role="tabpanel" aria-labelledby="bufferTab">
           <div class="image-info"><span class="file-symbol" data-icon="file"></span><div class="image-name"><strong id="fileName">No image loaded</strong><span id="fileDetails">Open a binary or S-record file, or read from the connected target.</span></div><span class="image-tag" id="fileTag">EMPTY BUFFER</span></div>
           <div id="imageSegmentRow" class="range-bar" hidden><div><label for="imageSegment">S-RECORD SEGMENT</label><select id="imageSegment"></select></div><span>Only the selected segment is used. Original addresses; gaps preserved.</span></div>

@@ -1574,3 +1574,9 @@ dialog::backdrop {
   font-weight:600;
 }
 #stopRead:disabled { color:#52617b; background:#f2f4f8; border-color:#cdd4df; }
+.speed-options { padding:14px 24px; background:#fff8ec; border-bottom:1px solid #e9dcc4; display:flex; gap:20px; align-items:center; }
+.speed-options>div { flex:0 1 300px; min-width:0; }
+.speed-options select { width:100%; }
+.speed-options label { display:block; font:10px var(--mono); margin-bottom:6px; }
+.speed-options p { flex:1; margin:0; color:#735932; }
+@media(max-width:700px) { .speed-options { flex-direction:column; align-items:stretch; padding:14px 16px; gap:10px; } .speed-options>div { flex:auto; } }

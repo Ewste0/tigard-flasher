@@ -97,6 +97,11 @@ class SimMemory(WordMemory):
                     self._execute(base, c)
                 elif old & 1 and not value & 1:
                     c["mcr"] |= 0x400  # abort completes
+                    if not self.c55 and old & 0x10:
+                        # C90 AN4194 2.1: clearing EHV initiates the next
+                        # programming unit even when PGM remains set.
+                        c["pending"] = {}
+                        c["interlock"] = None
                 return
             if offset in c["regs"]:
                 if not self.c55 and offset in (4, 8, 12):

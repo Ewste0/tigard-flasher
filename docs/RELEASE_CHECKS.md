@@ -1,5 +1,20 @@
 # Local release checks
 
+## 0.8.0 — 2026-10-26
+
+| Check | Result |
+| --- | --- |
+| Python suite | 255 passed |
+| Speed Write/Erase | CFLASH/DFLASH whole-block contents, untouched neighbors, one erase, FF skip, retained PGM, no array reads and restored locks |
+| Failure and Stop | Failed PEG/error flags, timeouts, disconnects, pulse-safe Stop; no next unit, success claim or nonexistent backup |
+| USB traffic | Coupled OnCE/controller model: 37/20 → 19/10 writes/response reads per additional 8-byte unit |
+| API/CLI | Explicit Speed, no-backup execution, unchecked results, expected IDCODE, invalid scope/range/type rejection before backend |
+| Browser | Speed default/scope, Standard override, accurate toolbar/review, 1440/480 px layouts; existing wiring, Stop and scroll checks passed |
+| Packages | Wheel/sdist metadata, required assets, licenses and public-source checks passed |
+
+No physical device was opened. These checks establish offline behavior and
+traffic counts, not real-device write time or equivalence to another programmer.
+
 ## 0.7.9 — 2026-10-26
 
 | Check | Result |
