@@ -22,7 +22,8 @@ Screenshot uses generated test bytes; no firmware or connected target is shown.
   three full reads per changed block on all MCU profiles; SHADOW remains separate.
 - 5 MHz interface clock by default; lower clocks remain selectable.
 - SPC560 OnCE register transactions combine their JTAG scans into one USB
-  submission, retaining the status check after every CPU instruction. FTDI
+  submission, retaining the status check after every CPU instruction. Writes
+  also omit unused CPU result captures; read results and verification stay checked. FTDI
   latency is explicitly 1 ms. Hardware speed for this change is not measured.
 - Queued MPC5748G CFLASH reads are the default at 100 kHz or faster, with an adjustable
   settling delay and automatic polling fallback if the target is not ready.
@@ -199,6 +200,11 @@ skips unchanged blocks, erases changed blocks, programs and verifies them.
 MPC5748 queued Write reuses its erase blank check and verifies each complete
 rebuilt block once at the end, including preserved bytes outside the image.
 The log reports backup, erase/blank, program and verification times separately.
+SPC560B64L3 uses 8-byte programming units with host-driven OnCE instructions;
+many USB response waits remain even at 5 MHz. The 10 µs queued-access delay
+applies only to MPC5748 CFLASH and has no effect on SPC560. Its controls are
+disabled for other targets. Version 0.7.9 reduces unused response traffic on
+SPC560 writes, but does not add a target-resident RAM programming loader.
 A separate full-array erase duplicates work. The UI always shows the current
 phase, including on narrow screens, with phase and total elapsed times. Overall
 progress is weighted work, not a time estimate: ordinary Write's first 20% is

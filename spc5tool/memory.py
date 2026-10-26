@@ -49,8 +49,8 @@ class OnceMemory(WordMemory):
         self.word_address(address)
         if not 0 <= value <= 0xFFFFFFFF:
             raise ValueError("word value out of range")
-        self.once.step(0x1BE1D000, value, force_operand=True)  # e_ori r1,r31,0
-        self.once.step(0x543F0000, address, force_operand=True)  # e_stw r1,0(r31)
+        self.once.step(0x1BE1D000, value, force_operand=True, capture_result=False)  # e_ori r1,r31,0
+        self.once.step(0x543F0000, address, force_operand=True, capture_result=False)  # e_stw r1,0(r31)
 
 
 class NexusMemory(WordMemory):

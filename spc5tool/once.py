@@ -189,7 +189,9 @@ class OnCE:
         self.select(cores[0])
         self.wait_debug(entering_debug=not self.chip.has_mmu)
 
-    def step(self, instruction, operand=0, *, force_operand=False, pc=None):
+    def step(self, instruction, operand=0, *, force_operand=False, pc=None, capture_result=True):
+        if not isinstance(capture_result, bool):
+            raise ValueError("capture_result must be a boolean")
         if pc is None:
             base = self.chip.debug_instruction_base
             if base is None:
@@ -240,7 +242,12 @@ class OnCE:
                     detail = "; debug register capture unavailable (no further I/O attempted)"
             raise DriverError(f"single-step 0x{instruction:08X}, next PC 0x{pc:08X}, "
                               f"sent CTL=0x{ctl:08X}: {exc}{detail}") from exc
-        return CpuScan.unpack(self.read_register(CPUSCR, 192)).wbbr
+        # Stores and operand setup need checked execution, but their WBBR
+        # result is unused. Only omit this read AFTER wait_debug has succeeded.
+        # A subsequent instruction supplies its complete CPUSCR state again.
+        if capture_result:
+            return CpuScan.unpack(self.read_register(CPUSCR, 192)).wbbr
+        return None
 
     def nexus_read(self, register):
         self.tap.scan_ir(10, NEXUS)

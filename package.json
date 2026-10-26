@@ -1,6 +1,6 @@
 {
   "name": "tigard-flasher-ui-tests",
-  "version": "0.7.8",
+  "version": "0.7.9",
   "private": true,
   "license": "MIT",
   "description": "Browser development tests; not required to run Tigard Flasher",

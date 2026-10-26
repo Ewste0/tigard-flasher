@@ -481,6 +481,11 @@ function settings() {
   $("frequencySelect").value = String(frequency); $("expectedId").value = expectedId;
   $("readModeSelect").value = fastRead ? "queued" : "checked";
   $("readDelayUs").value = readDelayUs;
+  const queuedAvailable = target.key === "spc5748g" && region.name === "CFLASH";
+  $("readModeSelect").disabled = $("readDelayUs").disabled = !queuedAvailable;
+  $("queuedAccessNote").textContent = queuedAvailable
+    ? "Applies to MPC5748 CFLASH access. The delay is additional to the JTAG clock period."
+    : `Not used for ${target.name} / ${region.name}. Changing the queued delay does not change this target's speed.`;
   $("settingsDialog").showModal();
   checkAdapter();
 }
@@ -573,7 +578,7 @@ $("settingsForm").addEventListener("submit", async event => {
   if (adapterSaving) return;
   try {
     let input = $("expectedId").value.trim(); if (input) number(input);
-    const delay = Number($("readDelayUs").value);
+    const delay = $("readDelayUs").disabled ? readDelayUs : Number($("readDelayUs").value);
     if (!Number.isInteger(delay) || delay < 1 || delay > 1000) throw new Error("Read delay must be 1–1000 microseconds.");
     if ($("adapterSelect").value !== (adapterState?.selection || "")) {
       adapterSaving = true; ++adapterRequest;
@@ -582,7 +587,8 @@ $("settingsForm").addEventListener("submit", async event => {
       applyAdapterState(state);
     }
     frequency = Number($("frequencySelect").value); expectedId = input;
-    fastRead = $("readModeSelect").value === "queued"; readDelayUs = delay;
+    if (!$("readModeSelect").disabled) fastRead = $("readModeSelect").value === "queued";
+    readDelayUs = delay;
     $("settingsDialog").close("save");
     modeDisplay(); suggestFilename(); checkAdapter(); log(`Mode: ${mode}. Clock: ${frequency.toLocaleString()} Hz. No JTAG session opened.`);
   } catch (error) { message(error); }

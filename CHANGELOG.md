@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.7.9 — 2026-10-26
+
+- Reduce SPC560 write overhead by omitting unused 192-bit CPUSCR result reads
+  after operand setup and store instructions. Every instruction still waits
+  for valid debug status; read results, connection self-tests, error diagnostics,
+  controller DONE/PEG checks and final verification remain checked.
+- In the coupled OnCE/Flash model, each additional 8-byte program unit requires
+  20 USB response reads instead of 34, with identical Flash register writes.
+  This is a measured offline traffic reduction, not a live timing claim.
+- Disable MPC5748 queued access/delay settings for other targets or regions and
+  explain that they do not affect SPC560 speed. Preserve settings for MPC5748.
+- Add five wire/controller regressions and browser checks for setting scope.
+
 ## 0.7.8 — 2026-10-26
 
 - Keep Stop available throughout MCU Write, Erase and Program. Finish the active

@@ -1,5 +1,17 @@
 # Local release checks
 
+## 0.7.9 — 2026-10-26
+
+| Check | Result |
+| --- | --- |
+| Python suite | 243 passed |
+| Write-only OnCE execution | Status checks retained; unused result scans omitted; read/self-test captures retained |
+| Integrated C90 program traffic | Identical Flash register writes and verified bytes; response reads per additional 8-byte unit 34 → 20 |
+| Failure paths | Delayed DEBUG and USB failure at either write instruction stop further execution |
+| Browser | SPC560 queued controls disabled with explanation; MPC5748 preference retained; existing Stop, presets, wiring and scrolling passed |
+
+Hardware remained disconnected. Traffic counts are not an elapsed-time benchmark.
+
 ## 0.7.8 — 2026-10-26
 
 | Check | Result |

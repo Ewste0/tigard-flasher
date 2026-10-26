@@ -3,4 +3,4 @@
 MPSSE -> TAP -> OnCE -> memory -> flash; SPI uses pyftdi's SPI API.
 See README for supported profiles, hardware validation status and limitations.
 """
-__version__ = "0.7.8"
+__version__ = "0.7.9"

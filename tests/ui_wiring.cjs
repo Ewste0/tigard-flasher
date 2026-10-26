@@ -115,6 +115,12 @@ async function main() {
           await page.setViewport({width:1440, height:1200});
         }
         await page.select("#chipSelect", "spc560b64");
+        await page.click("#settingsButton");
+        assert.equal(await page.$eval("#readModeSelect", n => n.disabled), true);
+        assert.equal(await page.$eval("#readDelayUs", n => n.disabled), true);
+        assert.match(await page.$eval("#queuedAccessNote", n => n.textContent), /Not used for SPC560B64L3/);
+        await page.click('#settingsDialog button[value="save"]');
+        assert.equal(await page.evaluate(() => request("write").fast_read), false);
         assert.equal(await page.$eval("#connectorReference", node => node.hidden), false);
         assert.equal(await page.$eval("#targetConnector", node => node.children.length), 10);
         await page.click('#targetConnector [data-wire="reset"]');
@@ -138,6 +144,10 @@ async function main() {
         assert.match(await page.$eval("#profileNote", node => node.textContent), /Cut 2.0/);
         assert.match(await page.$eval("#regionNote", node => node.textContent), /0x00401FFF/);
         await page.select("#chipSelect", "spc5748g");
+        await page.click("#settingsButton");
+        assert.equal(await page.$eval("#readDelayUs", n => n.disabled), false);
+        assert.equal(await page.$eval("#readDelayUs", n => n.value), "20");
+        await page.click('#settingsDialog button[value="cancel"]');
         assert.equal(await page.$eval("#readScope", node => node.value), "config");
         assert.equal(await page.$eval("#addressInput", node => node.value), "0x00FA8000");
         assert.equal(await page.$eval("#lengthInput", node => node.value), "0x00008000");

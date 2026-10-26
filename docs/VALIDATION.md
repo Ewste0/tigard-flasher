@@ -1,5 +1,33 @@
 # Validation and scope
 
+## SPC560 write result captures — 0.7.9, 2026-10-26
+
+The user identified the slow remote target as SPC560B64L3 at 5 MHz. The queued
+10 µs setting applies only to MPC5748 CFLASH; it never enters the SPC560 OnCE
+path. The exact remote software version and phase timing are still unavailable.
+
+Previously, both instructions in every OnceMemory.write32() retrieved CPUSCR
+after checked execution, although the caller discarded the returned WBBR.
+The operand setup and store now omit only those unused result scans. OSR must
+still report successful instruction completion before any next instruction.
+Reads and both initialization self-tests still retrieve/check their results;
+error diagnostics and transport failure propagation are unchanged.
+
+A coupled independent bit-clocked OnCE model and C90 controller model compares
+one and two fully programmed ECC units. The marginal cost of each additional
+8-byte unit drops from 51 USB writes / 34 response reads to 37 / 20. This excludes
+shared unlock/lock restoration and separate backup/verification passes, and
+assumes no extra busy-status polls. The Flash register-write log is identical,
+the stored bytes verify, and controller/lock state is restored. Additional
+tests cover delayed completion and USB failure at either instruction's status
+read, preventing subsequent instructions or replay.
+
+The 8-byte sequence remains consistent with
+[ST UM1627](https://www.st.com/resource/en/user_manual/um1627-standard-software-driver-for-c90lc-flash-module-embedded-on-spc56-m-b-c-d-and-p-lines-microcontroller-stmicroelectronics.pdf).
+No flash pulse, DONE/PEG/error check, blank preflight or final read-back verify
+was removed. A target-resident programming routine remains unimplemented.
+**No real-device elapsed-time improvement has been measured.**
+
 ## Stop and SPC560 USB submissions — 0.7.8, 2026-10-26
 
 The report of a 1.5 MB write at 13% after four minutes came from a colleague's
