@@ -76,6 +76,8 @@ class WebTests(unittest.TestCase):
             self.assertEqual(code, 200)
             self.assertGreater(len(content), 100)
         _, state = self.call("/api/status")
+        from spc5tool import __version__
+        self.assertEqual(state["version"], __version__)
         self.assertTrue(state["hardware_enabled"])
         self.assertEqual(state["initial_mode"], "hardware")
         self.assertEqual(state["frequency"], 5000000)
@@ -413,7 +415,7 @@ class WebTests(unittest.TestCase):
                     self.assertFalse(any(a == 0xFFFE0000 and v & 0x15 for a, v in memory.log))
                     self.assertEqual(memory.read(0xFA8000, 0x4000), b'\xff' * 0x4000)
 
-    def test_cancel_refused_after_first_mutation_and_operation_completes(self):
+    def test_cancel_after_mutation_waits_for_pulse_and_exports_backup(self):
         from spc5tool.flash import Flash
         entered, release = threading.Event(), threading.Event()
         original_wait = Flash._wait_done
@@ -427,14 +429,76 @@ class WebTests(unittest.TestCase):
             job = workspace.start(plan['id'])
             self.assertTrue(entered.wait(2))
             try:
-                self.assertFalse(workspace.snapshot(job['id'])['cancellable'])
-                self.assertEqual(self.call('/api/cancel', {'job_id': job['id']})[0], 400)
+                current = workspace.snapshot(job['id'])
+                self.assertTrue(current['cancellable'])
+                self.assertTrue(current['modification_started'])
+                self.assertGreaterEqual(current['elapsed_seconds'], 0)
+                self.assertGreaterEqual(current['phase_seconds'], 0)
+                self.assertEqual(self.call('/api/cancel', {'job_id': job['id']})[0], 200)
+                self.assertEqual(workspace.snapshot(job['id'])['status'], 'running')
             finally:
                 release.set()
             deadline = time.monotonic() + 5
             while workspace.active and time.monotonic() < deadline:
                 time.sleep(0.01)
-        self.assertEqual(workspace.snapshot(job['id'])['status'], 'complete')
+        final = workspace.snapshot(job['id'])
+        self.assertEqual(final['status'], 'cancelled', final)
+        self.assertTrue(final['result']['flash_may_be_modified'])
+        self.assertTrue(final['result']['incomplete'])
+        self.assertIn('partially erased or programmed', final['result']['message'])
+        self.assertNotIn('Flash was not changed', final['result']['message'])
+        self.assertLess(final['progress'], 100)
+        self.assertFalse(final['cancellable'])
+        _, backup = self.call('/api/download/' + final['result']['backup']['id'])
+        with zipfile.ZipFile(io.BytesIO(backup)) as archive:
+            self.assertIn('manifest.json', archive.namelist())
+
+    def test_stop_programming_write_otp_and_shadow_has_truthful_result(self):
+        from spc5tool.flash import Flash
+        from spc5tool.security import validate_shadow
+        for action, address in (('write', 0), ('program', 0x400000), ('write', 0x200000)):
+            with self.subTest(action=action, address=hex(address)):
+                workspace = self.server.workspace
+                entered, release = threading.Event(), threading.Event()
+                memories = []
+                wait = Flash._wait_done
+                def waiting(flash, base, timeout=None):
+                    if flash.memory.controllers[base]['mcr'] & 0x10:
+                        memories.append(flash.memory)
+                        entered.set()
+                        release.wait(5)
+                    return wait(flash, base, timeout)
+                image = workspace.add_file('stop-program.bin', bytes(range(16)))
+                with patch.object(Flash, '_wait_done', waiting):
+                    plan = workspace.plan(self.payload(action=action, address=address, file_id=image['id']))
+                    job = workspace.start(plan['id'])
+                    self.assertTrue(entered.wait(2))
+                    try:
+                        self.assertEqual(self.call('/api/cancel', {'job_id': job['id']})[0], 200)
+                    finally:
+                        release.set()
+                    deadline = time.monotonic() + 5
+                    while workspace.active and time.monotonic() < deadline:
+                        time.sleep(0.01)
+                final = workspace.snapshot(job['id'])
+                self.assertEqual(final['status'], 'cancelled', final)
+                self.assertTrue(final['result']['incomplete'])
+                self.assertTrue(final['result']['flash_may_be_modified'])
+                self.assertIn('backup', final['result'])
+                self.assertLess(final['progress'], 100)
+                memory = memories[0]
+                for controller in memory.controllers.values():
+                    self.assertFalse(controller['mcr'] & 0x15)
+                if action == 'program':
+                    self.assertIn('OTP changes cannot be undone', final['result']['message'])
+                    self.assertNotIn('Complete a Write', final['result']['message'])
+                    self.assertEqual(memory.read(address, 16), bytes(range(8)) + b'\xff' * 8)
+                elif address == 0x200000:
+                    validate_shadow(memory.regions[address])
+                    self.assertEqual(memory.read(address, 16), bytes(range(16)))
+                else:
+                    self.assertIn('including preserved bytes', final['result']['message'])
+                    self.assertEqual(memory.read(address, 16), bytes(range(8)) + b'\xff' * 8)
 
     def test_adapter_detection_does_not_open_a_jtag_session(self):
         from types import SimpleNamespace, ModuleType

@@ -1,5 +1,47 @@
 # Validation and scope
 
+## Stop and SPC560 USB submissions — 0.7.8, 2026-10-26
+
+The report of a 1.5 MB write at 13% after four minutes came from a colleague's
+remote device. No local hardware was connected, and the exact phase/MCU has not
+been established. It is not a controlled write benchmark. In the current
+ordinary Write pipeline, 0–20% is backup; the overall percentage cannot be
+extrapolated linearly to remaining time.
+
+SPC560 register accesses previously sent each TAP transition and IR/DR scan as
+separate USB writes. The new packaging compiles one register access into one
+MPSSE submission. Independent bit-clocked tests compare the complete TMS/TDI
+stream before/after and verify identical data. One word read takes 3 USB writes
+instead of 15, with the same two response reads and the same checked
+GO → OSR → CPUSCR order. Pending DEBUG is polled; errors stop before the next
+instruction. This is a traffic reduction, **not a measured 5× speed increase**.
+It does not introduce a RAM programming loader or a speculative instruction queue.
+
+The configured FTDI latency timer is now 1 ms instead of the PyFtdi MPSSE
+default of 16 ms. Existing SEND_IMMEDIATE commands already flush replies; this
+change alone does not imply a 16× gain. References:
+[PyFtdi MPSSE API](https://eblot.github.io/pyftdi/api/ftdi.html#pyftdi.ftdi.Ftdi.open_mpsse_from_url)
+and [FTDI AN_108](https://ftdichip.com/Support/Documents/AppNotes/AN_108_Command_Processor_for_MPSSE_and_MCU_Host_Bus_Emulation_Modes.pdf).
+
+Stop requests are accepted during MCU modification. Driver checkpoints occur
+after controller pulse cleanup, between programming units/quad-pages and read
+chunks. Volatile locks restore before the cancelled result is returned. SHADOW
+rebuilds defer Stop through configuration restoration and verification; real
+transport/controller errors still propagate immediately. Password installation
+and SPI modification are outside this cancellation change.
+
+Tests request Stop during erase/program EHV on every MCU profile, check the
+controller is idle, verify lock restoration, ensure the next unit is untouched,
+retain original backups and distinguish incomplete results from success.
+HTTP tests cover erase, Write, OTP and SHADOW, including downloadable backups.
+Browser tests exercise pending Stop and cancelled results at widths 1440, 1024,
+850 and 480 px. They start no hardware operation.
+
+Physical validation remains outstanding: connect the actual part, compare a
+small read against the prior version, then record complete phase timings on an
+authorized write. Neither P&E-equivalent speed nor all-MCU OTP qualification
+is established by these offline checks.
+
 ## Grouped erase and ordinary Write — 0.7.7, 2026-10-25
 
 Ordinary flash erase previously restarted the controller for every block.

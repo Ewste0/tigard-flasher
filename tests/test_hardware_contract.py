@@ -28,7 +28,7 @@ class HardwareContractTests(unittest.TestCase):
         with patch.dict(sys.modules, modules):
             with MpsseTransport.open(freq=100000) as transport:
                 factory.return_value.open_mpsse_from_url.assert_called_once_with(
-                    'ftdi://ftdi:2232h/2', direction=0x3B, initial=0x38, frequency=100000)
+                    'ftdi://ftdi:2232h/2', direction=0x3B, initial=0x38, frequency=100000, latency=1)
             factory.return_value.close.assert_called_once()
             modules['pyftdi.usbtools'].UsbTools.flush_cache.assert_called_once()
 

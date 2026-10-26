@@ -8,7 +8,9 @@ import math
 from dataclasses import dataclass
 
 from .errors import DriverError, OnCEInstructionError, OperationTimeout
+from .mpsse import MpsseBatch, MpsseTransport, MpsseError
 from .security import validate_login
+from .tap import JtagTap
 
 READ, GO = 0x200, 0x100
 CPUSCR, NOREG, OCR, DBSR, DBCR0, NEXUS = 0x10, 0x11, 0x12, 0x30, 0x31, 0x7C
@@ -52,15 +54,39 @@ class OnCE:
         self.selected = True
 
     def read_register(self, register, bits=32):
-        self.tap.scan_ir(10, READ | register)
-        return self.tap.scan_dr(bits)
+        def scans(tap):
+            tap.scan_ir(10, READ | register)
+            return tap.scan_dr(bits)
+        return self._exchange(scans, read=True)
 
     def write_register(self, register, value, bits=32):
-        self.tap.scan_ir(10, register)
-        self.tap.scan_dr(bits, value, read=False)
+        def scans(tap):
+            tap.scan_ir(10, register)
+            tap.scan_dr(bits, value, read=False)
+        self._exchange(scans)
 
     def status(self):
-        return self.tap.scan_ir(10, READ | NOREG, read=True)
+        return self._exchange(lambda tap: tap.scan_ir(10, READ | NOREG, read=True), read=True)
+
+    def _exchange(self, scans, *, read=False):
+        """Send one SPC560 register access in one USB write.
+
+        Preserve every JTAG clock/command and the host check between GO, OSR
+        and CPUSCR capture. This is packaging of a single register transaction,
+        not a queue of unchecked CPU instructions. Existing Nexus batches and
+        other families keep their own transport path.
+        """
+        transport = getattr(self.tap, "io", None)
+        if (self.chip.algorithm != "c90-b" or not isinstance(transport, MpsseTransport)
+                or isinstance(transport, MpsseBatch)):
+            return scans(self.tap)
+        batch = MpsseBatch(transport)
+        tap = JtagTap(batch)
+        tap.state = self.tap.state
+        capture = scans(tap)
+        values = batch.execute()  # No retry/replay following a failed exchange.
+        self.tap.state = tap.state
+        return values[capture] if read else None
 
     def wait_debug(self, *, allow_reset=False, entering_debug=False):
         deadline = time.monotonic() + self.timeout
@@ -189,6 +215,10 @@ class OnCE:
             self.tap.scan_dr(1, 0, read=False)
         try:
             self.wait_debug()
+        except MpsseError:
+            # Preserve the transport-failure type: Flash must not attempt
+            # cleanup through a TAP whose state/completion is unknown.
+            raise
         except DriverError as exc:
             detail = ""
             if isinstance(exc, OnCEInstructionError) and exc.status & 0x248 == 0x208:
@@ -204,6 +234,8 @@ class OnCE:
                     detail = (f"; captured PC=0x{captured.pc:08X}, IR=0x{captured.instruction:08X}, "
                               f"MSR=0x{captured.msr:08X}, CTL=0x{captured.control:08X}, "
                               f"OCR=0x{ocr:08X}, DBCR0=0x{dbcr0:08X}, DBSR=0x{dbsr:08X}")
+                except MpsseError as transport_error:
+                    raise MpsseError(f"{exc}; debug register capture unavailable: {transport_error}") from transport_error
                 except DriverError:
                     detail = "; debug register capture unavailable (no further I/O attempted)"
             raise DriverError(f"single-step 0x{instruction:08X}, next PC 0x{pc:08X}, "

@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.7.8 — 2026-10-26
+
+- Keep Stop available throughout MCU Write, Erase and Program. Finish the active
+  flash pulse and restore locks before stopping; defer cancellation throughout
+  SHADOW rebuilding. Retain backups, report incomplete Flash honestly, and give
+  separate recovery guidance for ordinary Flash and irreversible OTP units.
+- Keep phase text visible on small screens, show phase/total elapsed time, and
+  make Stop prominent. Overall progress remains weighted work rather than ETA.
+- Combine each SPC560 OnCE register access into one USB submission. The wire
+  model observes identical JTAG clocks and data with 3 instead of 15 USB writes
+  per word read, still checking every instruction before collecting its result.
+  Configure the FTDI latency timer to 1 ms. No live speed claim is made.
+- Preserve USB error types through OnCE execution/diagnostics so flash cleanup
+  cannot issue more traffic after a transport failure. Never replay a failed GO.
+- Add cancellation tests across all MCU profiles and wire/error/UI regressions.
+  No hardware was attached during this update.
+
 ## 0.7.7 — 2026-10-25
 
 - Erase selected ordinary MCU blocks together within each controller/region,

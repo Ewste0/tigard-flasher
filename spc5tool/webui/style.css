@@ -1033,10 +1033,8 @@ h1 {
 }
 .status-message>span:last-child {
   font-size:10px;
-  color:#9ca7ba;
-  overflow:hidden;
-  white-space:nowrap;
-  text-overflow:ellipsis;
+  color:#52617b;
+  overflow-wrap:anywhere;
 }
 .progress-area {
   display:flex;
@@ -1281,7 +1279,11 @@ dialog::backdrop {
     flex-wrap:wrap;
   }
   .status-message>span:last-child {
-    display:none;
+    display:block;
+    flex-basis:100%;
+  }
+  .status-message {
+    flex-wrap:wrap;
   }
   .status-target {
     min-width:130px;
@@ -1509,12 +1511,16 @@ dialog::backdrop {
     padding:13px 16px;
     min-height:59px;
     gap:15px;
+    flex-wrap:wrap;
   }
   .status-target {
     display:none;
   }
   .progress-area {
-    width:45%;
+    width:100%;
+  }
+  .status-message {
+    flex-basis:100%;
   }
   .status-message strong {
     font-size:10px;
@@ -1554,3 +1560,17 @@ dialog::backdrop {
 .region-name small { font-size:10px; }
 .progress-area progress { flex:1; min-width:40px; }
 #progressText { flex:none; min-width:30px; text-align:right; }
+#jobElapsed { flex:none; white-space:nowrap; color:#52617b; }
+#stopRead {
+  flex:none;
+  white-space:nowrap;
+  padding:7px 12px;
+  min-height:32px;
+  border:1px solid #cc9894;
+  border-radius:5px;
+  background:#fff3f1;
+  color:#873a34;
+  font-size:11px;
+  font-weight:600;
+}
+#stopRead:disabled { color:#52617b; background:#f2f4f8; border-color:#cdd4df; }

@@ -20,9 +20,32 @@ class Flash:
         self.c55 = chip.algorithm.startswith("c55")
         self.poisoned = False
         self.before_modify = lambda: None
+        self.cancel_check = lambda: None
+        self._cancel_deferred = 0
         self.bulk_program = False
         self.write_stats = None
         self.erase_stats = None
+
+    def checkpoint(self):
+        """Cooperate only outside an active erase/program controller pulse."""
+        if not self._cancel_deferred:
+            self.cancel_check()
+
+    @contextmanager
+    def defer_cancellation(self):
+        """Finish a SHADOW/configuration rebuild before accepting a stop.
+
+        Leaving valid security configuration half-written can censor the next
+        connection. Errors still propagate immediately; this defers user Stop,
+        not controller/transport failures or timeouts.
+        """
+        self.checkpoint()
+        self._cancel_deferred += 1
+        try:
+            yield
+        finally:
+            self._cancel_deferred -= 1
+        self.checkpoint()
 
     @contextmanager
     def stage(self, name, start=0, end=1):
@@ -48,6 +71,7 @@ class Flash:
         return status
 
     def read(self, address, size):
+        self.checkpoint()
         blocks = select_blocks(self.chip, address, size)
         bases = {b.controller for b in blocks}
         for base in bases:
@@ -92,6 +116,7 @@ class Flash:
                 if status & (ERRORS | (0xF0000000 if self.c55 else 0)):
                     raise DriverError(f"flash read/ECC error near 0x{address + offset:08x}: MCR=0x{status:08x}")
             self.progress("read", len(data), size)
+            self.checkpoint()
         return bytes(data)
 
     def verify(self, address, data):
@@ -145,6 +170,7 @@ class Flash:
     @contextmanager
     def _unlocked(self, blocks):
         """Change only selected volatile lock bits; restore original locks."""
+        self.checkpoint()
         self.before_modify()
         masks = {}
         for b in blocks:
@@ -202,10 +228,11 @@ class Flash:
                 original = self.read(address, size)
             from .security import validate_shadow
             validate_shadow(original)
-            with self.stage("erase shadow user area", 0.1, 0.8):
-                self._erase(address, size)
-            with self.stage("restore shadow configuration", 0.8, 1):
-                self.program(address + 0x3DD0, original[0x3DD0:])
+            with self.defer_cancellation():
+                with self.stage("erase shadow user area", 0.1, 0.8):
+                    self._erase(address, size)
+                with self.stage("restore shadow configuration", 0.8, 1):
+                    self.program(address + 0x3DD0, original[0x3DD0:])
             return
         self._erase(address, size)
 
@@ -254,6 +281,7 @@ class Flash:
                             raise DriverError("flash erase selector did not latch")
                     self.memory.write32(block.address, 0xFFFFFFFF)
             stats["erase_seconds"] += time.monotonic() - started
+            self.checkpoint()  # EHV/ERS cleared and original locks restored.
             # Restore volatile locks before the read-only full blank check.
             # Never read across unselected holes in a sparse Write selection.
             checked, started = 0, time.monotonic()
@@ -280,6 +308,12 @@ class Flash:
         self._require_writable()
         blocks = select_blocks(self.chip, address, len(data))
         self._check_blocks(blocks)
+        if any(b.kind == "shadow" for b in blocks):
+            with self.defer_cancellation():
+                return self._program_validated(address, data, blocks)
+        self._program_validated(address, data, blocks)
+
+    def _program_validated(self, address, data, blocks):
         unit = self.chip.program_unit
         if address % unit or len(data) % unit:
             raise ValueError(f"MCU programming requires complete, aligned {unit}-byte ECC units")
@@ -313,6 +347,7 @@ class Flash:
             block_index = 0
             offset = 0
             while offset < len(data):
+                self.checkpoint()
                 dest = address + offset
                 while dest >= blocks[block_index].end:
                     block_index += 1
@@ -342,6 +377,7 @@ class Flash:
                                 self.memory.write32(dest + n, int.from_bytes(word[n:n + 4], "big"))
                 offset += count
                 self.progress("program", offset, len(data))
+                self.checkpoint()  # _operation finished; _unlocked restores on exit.
 
     def patch(self, address, data, backup):
         """Back up every affected block BEFORE any erase; preserve its other bytes.
@@ -380,16 +416,17 @@ class Flash:
                 start = 0.15 + 0.8 * index / len(blocks)
                 mid = start + 0.2 / len(blocks)
                 end = 0.15 + 0.8 * (index + 1) / len(blocks)
-                with self.stage("erase", start, mid):
-                    self._erase(block.address, block.size)
-                with self.stage("program", mid, end):
-                    if block.kind == "shadow":
-                        with self.stage("restore configuration", 0, 0.1):
-                            self.program(block.address + 0x3DD0, bytes(patched[0x3DD0:]))
-                        with self.stage("program user area", 0.1, 1):
-                            self.program(block.address, bytes(patched[:0x3DD0]))
-                    else:
-                        self.program(block.address, bytes(patched))
+                with self.defer_cancellation():
+                    with self.stage("erase", start, mid):
+                        self._erase(block.address, block.size)
+                    with self.stage("program", mid, end):
+                        if block.kind == "shadow":
+                            with self.stage("restore configuration", 0, 0.1):
+                                self.program(block.address + 0x3DD0, bytes(patched[0x3DD0:]))
+                            with self.stage("program user area", 0.1, 1):
+                                self.program(block.address, bytes(patched[:0x3DD0]))
+                        else:
+                            self.program(block.address, bytes(patched))
             self.progress("write", round(0.15 + 0.8 * (index + 1) / len(blocks), 12), 1)
         with self.stage("final verification", 0.95, 1):
             self.verify(address, data)

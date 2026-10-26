@@ -21,6 +21,9 @@ Screenshot uses generated test bytes; no firmware or connected target is shown.
   Logs separate backup, controller erase and full blank-check time. Write uses
   three full reads per changed block on all MCU profiles; SHADOW remains separate.
 - 5 MHz interface clock by default; lower clocks remain selectable.
+- SPC560 OnCE register transactions combine their JTAG scans into one USB
+  submission, retaining the status check after every CPU instruction. FTDI
+  latency is explicitly 1 ms. Hardware speed for this change is not measured.
 - Queued MPC5748G CFLASH reads are the default at 100 kHz or faster, with an adjustable
   settling delay and automatic polling fallback if the target is not ready.
   **Settings → MPC5748 CFLASH reading → Standard** selects polling manually.
@@ -38,8 +41,9 @@ Screenshot uses generated test bytes; no firmware or connected target is shown.
 - SPC58 UTEST defaults to its 4 KiB customer OTP. Generic Program excludes
   factory/lifecycle/DCF fields; password installation is a separate operation.
 - Continuous virtualized hex/ASCII viewer for raw binaries up to 16 MiB, offset navigation,
-  named saves, SHA-256, drag-and-drop, and cancellable reads. Write/Erase may be
-  stopped during backup/preflight, before the first flash modification.
+  named saves, SHA-256, drag-and-drop, and cancellable reads. MCU Write/Erase/Program
+  keep Stop available after modifications start: the current flash pulse and
+  lock restoration finish first. SHADOW rebuilding finishes before stopping.
 - Interactive Tigard/14-pin/10-pin/SPI wiring guides, USB presence, and target identification.
 - Reviewed write plans, original-block backups (OTP: affected units) with checksums, preserved bytes outside
   a patch, and automatic verification.
@@ -195,8 +199,25 @@ skips unchanged blocks, erases changed blocks, programs and verifies them.
 MPC5748 queued Write reuses its erase blank check and verifies each complete
 rebuilt block once at the end, including preserved bytes outside the image.
 The log reports backup, erase/blank, program and verification times separately.
-A separate full-array erase duplicates work. Stop is available before flash
-modification; after that point the operation completes its programming and verification.
+A separate full-array erase duplicates work. The UI always shows the current
+phase, including on narrow screens, with phase and total elapsed times. Overall
+progress is weighted work, not a time estimate: ordinary Write's first 20% is
+backup, followed by erase/blank check (20–40%), programming (40–80%) and final
+verification (80–100%). A reading of 13% does not mean 13% of the image is written.
+
+**Stop** remains available during MCU Write, Erase and Program. It waits for the
+active pulse to finish and restores volatile locks. Stop during SHADOW waits
+for the protected rebuild to finish; password installation and SPI modification
+remain non-cancellable. Cancellation never resumes/resets the MCU or reports
+successful verification. The backup stays available to download.
+
+After a stop during modification, Flash may contain erased or partially written
+blocks. This is not rollback or automatic resume. Restore complete affected
+blocks from the backup or the intended full-block image before use; repeating
+a small patch alone cannot recover preserved bytes already erased. OTP changes
+cannot be undone or repeated: verify affected units and only program remaining
+erased units. [Validation and limitations](docs/VALIDATION.md) distinguish offline
+traffic checks from real-device performance.
 
 ## License and attribution
 

@@ -1,5 +1,19 @@
 # Local release checks
 
+## 0.7.8 — 2026-10-26
+
+| Check | Result |
+| --- | --- |
+| Python suite | 238 tests passed, including API and isolated wire/controller models |
+| Stop during modification | All six MCU profiles; erase, single-unit/quad-page program, Write, OTP, lock restoration and cleanup failure |
+| SHADOW | Stop deferred until configuration and data rebuilding finish; no interruption of an active pulse |
+| OnCE USB packaging | Identical pin-clock stream; word read 15 → 3 USB writes, two response reads retained; delayed DEBUG and USB/instruction errors checked |
+| UI/API | Visible Stop after mutation; pending and cancelled states, backups, OTP-specific recovery guidance, phase and elapsed time |
+| Browser | Both reset mappings, Stop at 1440/1024/850/480 px, S-records, presets and 16 MiB scrolling |
+
+No connected target or live write benchmark was available. USB submission counts
+do not establish elapsed-time improvement. See [VALIDATION.md](VALIDATION.md).
+
 ## 0.7.7 — 2026-10-25
 
 | Check | Result |

@@ -36,6 +36,10 @@ let imageSegment = 0, viewBase = 0;
 const HEX_ROW_HEIGHT = 22;
 const hex = (n) => "0x" + Number(n).toString(16).toUpperCase().padStart(8, "0");
 const sizeText = (n) => n >= 1048576 ? `${Number((n / 1048576).toFixed(2))} MiB` : n >= 1024 ? `${Number((n / 1024).toFixed(2))} KiB` : `${n} bytes`;
+const durationText = (seconds) => {
+  const n = Math.max(0, Math.floor(seconds || 0));
+  return n < 60 ? `${n}s` : `${Math.floor(n / 60)}m ${String(n % 60).padStart(2, "0")}s`;
+};
 const number = (value) => {
   const text = String(value).trim();
   if (!/^(0x[0-9a-f]+|[0-9]+)$/i.test(text)) throw new Error("Use decimal or 0x-prefixed hexadecimal for the address and length.");
@@ -438,11 +442,16 @@ async function follow(job) {
   while (true) {
     $("stopRead").hidden = !!job.finished || !job.cancellable;
     $("stopRead").disabled = !!job.cancel_requested;
-    $("stopRead").textContent = job.cancel_requested ? "Stopping…" : job.plan.action === "read" ? "Stop read" : ["write", "erase", "program"].includes(job.plan.action) ? "Stop before changes" : "Stop";
+    $("stopRead").textContent = job.cancel_requested ? "Stopping…" : "Stop";
+    $("stopRead").title = "Stop after the current flash pulse and lock restoration. SHADOW rebuilding must finish first. Already changed flash is not rolled back.";
     $("jobProgress").value = job.progress;
-    if (!job.finished) { $("statusText").textContent = job.plan.action.replaceAll("_", " "); $("statusDetail").textContent = job.phase; }
+    if (!job.finished) {
+      $("statusText").textContent = job.cancel_requested ? "Stopping…" : job.plan.action.replaceAll("_", " ");
+      $("statusDetail").textContent = `${job.phase} · ${durationText(job.phase_seconds)} in this phase`;
+    }
     $("progressText").textContent = `${job.progress}%`;
-    $("statusDetail").title = job.phase;
+    $("jobElapsed").textContent = durationText(job.elapsed_seconds);
+    $("statusDetail").title = $("statusDetail").textContent;
     for (const entry of job.logs.slice(seenLogs)) log(entry.message, "INFO", entry.time * 1000);
     seenLogs = job.logs.length;
     if (job.finished) break;
@@ -536,8 +545,12 @@ $("readScope").addEventListener("change", () => applyPreset($("readScope").value
 $("stopRead").addEventListener("click", async () => {
   if (!activeJob) return;
   $("stopRead").disabled = true;
-  try { await api("/api/cancel", {job_id:activeJob}); log("Stop requested; waiting for a safe checkpoint…"); }
-  catch (error) { message(error); }
+  try {
+    await api("/api/cancel", {job_id:activeJob});
+    $("stopRead").textContent = "Stopping…";
+    log("Stop requested. Waiting for the current flash pulse or protected configuration rebuild. Already changed flash is not rolled back.");
+  }
+  catch (error) { message(error); $("stopRead").disabled = false; }
 });
 $("familySelect").addEventListener("change", setFamily); $("chipSelect").addEventListener("change", setTarget);
 $("regionRange").addEventListener("click", () => { $("addressInput").value = hex(region.base); $("lengthInput").value = hex(region.size); updateRange(); });
@@ -589,6 +602,8 @@ async function initialize() {
   controls(); tab("buffer");
   try {
     const state = await api("/api/status"); targets = state.targets; resetPin = state.reset_pin || "srst";
+    $("appVersion").textContent = `LOCAL / ${state.version}`;
+    log(`Tigard Flasher ${state.version}.`);
     if (!state.hardware_enabled || state.initial_mode !== "hardware") throw new Error("Restart the app with the current live-only server.");
     frequency = state.frequency || 5000000;
     if (![...$("frequencySelect").options].some(option => Number(option.value) === frequency)) {

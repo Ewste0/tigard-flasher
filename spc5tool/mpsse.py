@@ -106,8 +106,10 @@ class MpsseTransport:
         # open_mpsse_from_url sends 0x8A/0x8D/0x97, sets frequency, and applies the
         # low-byte direction/initial we pass (BDBUS on interface 2).
         try:
+            # The library defaults to 16 ms. SEND_IMMEDIATE also flushes each
+            # reply; 1 ms keeps residual short packets responsive on FT2232H.
             ftdi.open_mpsse_from_url(
-                url, direction=DIR_LOW, initial=IDLE_LOW, frequency=freq
+                url, direction=DIR_LOW, initial=IDLE_LOW, frequency=freq, latency=1
             )
         except Exception as exc:
             ftdi.close()

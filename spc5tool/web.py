@@ -14,7 +14,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
-from . import chips
+from . import chips, __version__
 from .adapters import discover_tigards
 from .usb_backend import usb_error_message
 from .errors import DriverError
@@ -212,13 +212,15 @@ class Workspace:
         with self.lock:
             job = self.snapshot(key)
             if job["status"] != "running" or not job.get("cancellable"):
-                raise ValueError("this operation cannot stop after flash modification has started")
-            self.jobs[key]["cancel_requested"] = True
+                raise ValueError("this operation is finished or does not support stopping")
+            if not job.get("cancel_requested"):
+                self.jobs[key]["cancel_requested"] = True
+                self._log(self.jobs[key], "Stop requested. Waiting for the current flash pulse and lock restoration; SHADOW configuration must finish rebuilding first.")
             return self.snapshot(key)
 
     def status(self):
         with self.lock:
-            return {"targets": catalog(), "hardware_enabled": self.allow_hardware,
+            return {"version": __version__, "targets": catalog(), "hardware_enabled": self.allow_hardware,
                     "url": self.url, "reset_pin": self.reset_pin, "workspace": str(self.directory),
                     "initial_mode": self.initial_mode, "frequency": self.frequency,
                     "active": self.active, "jobs": [self.snapshot(k) for k in list(self.jobs)[-20:]],
@@ -379,7 +381,9 @@ class Workspace:
             plan = self.plans.pop(plan_id)
             key = uuid.uuid4().hex
             job = {"id": key, "plan": plan, "status": "running", "phase": "Opening session",
-                   "progress": 0, "logs": [], "started": time.time(), "result": {}}
+                   "progress": 0, "logs": [], "started": time.time(), "result": {},
+                   "modification_started": False}
+            job["phase_started"] = job["started"]
             job["cancellable"] = (plan["action"] in ("read", "verify", "blank") or
                                   plan["target"] in chips.CHIPS and plan["action"] in ("write", "erase", "program"))
             self.jobs[key] = job
@@ -391,7 +395,11 @@ class Workspace:
         with self.lock:
             if key not in self.jobs:
                 raise ValueError("unknown operation")
-            return json.loads(json.dumps(self.jobs[key]))
+            job = json.loads(json.dumps(self.jobs[key]))
+            now = job.get("finished", time.time())
+            job["elapsed_seconds"] = round(max(0, now - job["started"]), 1)
+            job["phase_seconds"] = round(max(0, now - job["phase_started"]), 1)
+            return job
 
     def _log(self, job, message):
         with self.lock:
@@ -421,13 +429,36 @@ class Workspace:
         backup_dir = self.directory / "backups" / job["id"]
         result = {}
         final_status = "failed"
+        backend_flash = None
 
-        def progress(phase, done, total):
+        def cancel_check():
             with self.lock:
                 if job.get("cancellable") and job.get("cancel_requested"):
+                    if job["modification_started"]:
+                        recovery = ("OTP changes cannot be undone. Verify the affected units and program only remaining erased units."
+                                    if any(b["kind"] == "otp" for b in plan["blocks"]) else
+                                    "Restore complete affected blocks using the backup or intended full-block image, including preserved bytes, then verify before use.")
+                        raise ReadCancelled("Stopped at a flash checkpoint. Flash may be partially erased or programmed; "
+                                            "the operation is incomplete and was not fully verified. "
+                                            "The backup is retained. " + recovery)
                     raise ReadCancelled("Read stopped. No completed dump was saved." if action == "read" else
                                         "Operation stopped before flash modification. Flash was not changed.")
-                job["phase"] = f"{action.capitalize()} · {phase}"
+
+        def progress(phase, done, total):
+            # MCU cancellation belongs to Flash's checkpoints, which defer it
+            # across a security-sector rebuild. Never throw from progress in
+            # the middle of that protected sequence.
+            if not isinstance(backend_flash, Flash):
+                cancel_check()
+            with self.lock:
+                parts = []
+                for part in phase.split(" / "):
+                    if not parts or parts[-1] != part:
+                        parts.append(part)
+                label = f"{action.capitalize()} · {' / '.join(parts)}"
+                if label != job["phase"]:
+                    job["phase_started"] = time.time()
+                job["phase"] = label
                 # Only successful finalization may display 100%.
                 fraction = round(100 * done / total) if total else 0
                 job["progress"] = max(job["progress"], min(99, fraction))
@@ -439,12 +470,11 @@ class Workspace:
                 job["result"]["backup_path"] = str(backup_dir)
 
         def before_modify():
-            # Atomically close the cancellation window before any lock changes
-            # or erase/program pulse. Never interrupt a partially rewritten block.
+            # Flash checks cancellation before entering this callback. Keep
+            # Stop available once changes begin; the driver owns safe boundaries.
             with self.lock:
-                if job.get("cancel_requested"):
-                    raise ReadCancelled("Operation stopped before flash modification. Flash was not changed.")
-                job["cancellable"] = False
+                backend_flash.checkpoint()
+                job["modification_started"] = True
 
         try:
             self._log(job, f"Opening Tigard channel B: {plan['adapter_url']}. MCU memory operations reset and halt the target.")
@@ -475,9 +505,12 @@ class Workspace:
                     if len(data) != plan["length"]:
                         raise ValueError("image data is incomplete")
                 self._log(job, f"{action.replace('_', ' ').capitalize()} {plan['length']:,} bytes at 0x{plan['address']:08X}.")
+                cancel_check()
                 with self._backend(plan, progress) as flash:
+                    backend_flash = flash
                     if isinstance(flash, Flash):
                         flash.before_modify = before_modify
+                        flash.cancel_check = cancel_check
                     states = getattr(flash, "debug_states", None)
                     if states:
                         result["debug_states"] = states
@@ -589,6 +622,8 @@ class Workspace:
                 job.update(phase="Finishing", progress=100)
         except ReadCancelled as exc:
             final_status = "cancelled"
+            result["incomplete"] = True
+            result["flash_may_be_modified"] = job["modification_started"]
             result["message"] = str(exc)
             self._log(job, str(exc))
         except Exception as exc:
@@ -621,7 +656,7 @@ class ReadCancelled(Exception):
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "TigardUI/0.5"
+    server_version = f"TigardUI/{__version__}"
 
     def log_message(self, *_):
         pass

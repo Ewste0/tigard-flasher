@@ -36,6 +36,7 @@ async function main() {
         const descriptor = serial => ({serial, description:"Tigard test fixture", interface:2, url:`ftdi://ftdi:2232h:${serial}/2`});
         let usbState = {connected:true, devices:[descriptor("TEST-ONLY")], selected_url:descriptor("TEST-ONLY").url,
           selection:null, revision:1, message:"USB detected · TEST-ONLY"};
+        let jobFixture = null, stopRequests = 0;
         await page.setRequestInterception(true);
         page.on("request", request => {
           if (request.url().endsWith("/api/adapter")) {
@@ -45,6 +46,15 @@ async function main() {
                 revision:usbState.revision + 1, message:`USB detected · ${usbState.devices.find(d => d.url === selection).serial}`};
             }
             request.respond({status:200, contentType:"application/json", body:JSON.stringify(usbState)});
+          }
+          else if (jobFixture && request.url().endsWith("/api/jobs/ui-stop-test")) {
+            request.respond({status:200, contentType:"application/json", body:JSON.stringify(jobFixture)});
+          }
+          else if (jobFixture && request.url().endsWith("/api/cancel")) {
+            assert.equal(JSON.parse(request.postData()).job_id, "ui-stop-test");
+            stopRequests++;
+            jobFixture.cancel_requested = true;
+            request.respond({status:200, contentType:"application/json", body:JSON.stringify(jobFixture)});
           }
           else request.continue();
         });
@@ -210,7 +220,36 @@ async function main() {
         await page.click('#settingsDialog button[value="cancel"]');
         const state = await page.evaluate(async () => (await fetch("/api/status")).json());
         assert.equal(state.hardware_enabled, mode === "hardware");
+        assert.equal(await page.$eval("#appVersion", n => n.textContent), `LOCAL / ${state.version}`);
         assert.equal(state.jobs.length, 0);
+        // Exercise the real polling UI with a running, already-modified Write.
+        // Only the HTTP job is a fixture; no /api/run or USB operation occurs.
+        jobFixture = {id:"ui-stop-test", plan:{action:"write", mode:"hardware"}, status:"running",
+          cancellable:true, modification_started:true, progress:53, phase:"Write · program / program",
+          elapsed_seconds:240, phase_seconds:47, logs:[], result:{}};
+        await page.evaluate(job => { window.stopTestDone = false; follow(job).then(() => { window.stopTestDone = true; }); }, jobFixture);
+        for (const width of [1440, 1024, 850, 480]) {
+          await page.setViewport({width,height:900});
+          assert.equal(await page.$eval("#stopRead", n => !n.hidden && !n.disabled), true);
+          assert.equal(await page.$eval("#stopRead", n => n.textContent), "Stop");
+          assert.equal(await page.$eval("#statusDetail", n => getComputedStyle(n).display !== "none" && n.getBoundingClientRect().height > 0), true);
+          assert.match(await page.$eval("#statusDetail", n => n.textContent), /program.*47s/);
+          assert.equal(await page.$eval("#jobElapsed", n => n.textContent), "4m 00s");
+          assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+        }
+        if (reset === "srst") await page.screenshot({path:path.join(screenshots,"write-stop-mobile.png"),fullPage:true});
+        await page.click("#stopRead");
+        await page.waitForFunction(() => document.getElementById("stopRead").textContent === "Stopping…");
+        assert.equal(stopRequests, 1);
+        assert.equal(await page.$eval("#stopRead", n => n.disabled), true);
+        jobFixture = {...jobFixture, status:"cancelled", cancellable:false, finished:Date.now()/1000,
+          result:{message:"Stopped at a flash checkpoint. Flash may be partially erased or programmed.",
+            backup:{id:"fixture-backup",name:"backup-test.zip"}}};
+        await page.waitForFunction(() => window.stopTestDone);
+        assert.equal(await page.$eval("#statusText", n => n.textContent), "Stopped");
+        assert.equal(await page.$eval("#stopRead", n => n.hidden), true);
+        assert.equal(await page.$eval("#jobProgress", n => n.value), 53);
+        assert.equal(await page.$eval("#resultActions a", n => n.textContent), "Download backup ZIP");
         assert.deepEqual(errors, []);
         console.log(`Browser wiring checks passed (${reset}, ${mode}): JTAG, SPI, highlighting, images, presets, names, no hardware operations.`);
       } finally {
