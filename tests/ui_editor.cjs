@@ -54,6 +54,11 @@ async function click(selector){
   assert.match(await page.$eval('#edName',n=>n.textContent),/0033/);
   assert.equal(await page.$eval('#edVin',n=>n.value),'5YJ3E1EA7KF000001');
   assert.equal(await page.$eval('#edVinTools',n=>n.hidden),false);
+  stage='VCSEC record selection';await click('#edRows tr:nth-child(2) td:nth-child(2)');
+  assert.equal(await page.$eval('#edKeyTools',n=>n.hidden),false);
+  assert.equal(await page.$eval('#edVinTools',n=>n.hidden),true);
+  await click('#edRows tr:first-child td:last-child');
+  assert.equal(await page.$eval('#edVin',n=>n.value),'5YJ3E1EA7KF000001');
   await page.focus('#editorTab');await page.keyboard.press('End');
   assert.equal(await page.$eval('#wiringTab',n=>n.getAttribute('aria-selected')),'true');
   await page.keyboard.press('Home');await page.keyboard.press('ArrowRight');
@@ -92,6 +97,48 @@ async function click(selector){
   await page.waitForFunction(()=>document.getElementById('fileName').textContent==='spc5668.bin'&&!busy);
   await click('#editorTab');await page.waitForFunction(()=>document.getElementById('edSummary').textContent.includes('2 SPC56')&&!busy);
   await page.select('#edSection','spc56');assert.equal(await page.$eval('#edName',n=>n.textContent),'firmware.rc');
+  stage='SPC56 record selection by name';
+  await click('#edRows tr:nth-child(2) td:nth-child(2)');
+  assert.equal(await page.$eval('#edName',n=>n.textContent),'internal.dat');
+  assert.equal(await page.$eval('#edValue',n=>n.value),'name=fixture\n');
+  await click('#edRows tr:first-child td:nth-child(2)');
+  assert.equal(await page.$eval('#edName',n=>n.textContent),'firmware.rc');
+  stage='SPC56 whole rows and keyboard';
+  for(const width of [1440,850,480]){
+   await page.setViewport({width,height:1100});
+   await click('#edRows tr:nth-child(2) td:nth-child(2)');
+   assert.equal(await page.$eval('#edName',n=>n.textContent),'internal.dat');
+   assert.equal(await page.$eval('#edValue',n=>n.value),'name=fixture\n');
+   assert.equal(await page.$eval('#edRows tr.selected td:nth-child(2)',n=>n.textContent),'internal.dat');
+   await click('#edRows tr:first-child td:last-child');
+   assert.equal(await page.$eval('#edName',n=>n.textContent),'firmware.rc');
+   await page.$eval('#edRows tr:nth-child(2) td:first-child',n=>n.scrollIntoView({block:'center'}));
+   const cell=await (await page.$('#edRows tr:nth-child(2) td:first-child')).boundingBox();
+   await page.mouse.click(cell.x+cell.width-3,cell.y+cell.height-3);
+   assert.equal(await page.$eval('#edName',n=>n.textContent),'internal.dat');
+   await page.$eval('#edValue',n=>{n.value='name=draft\n';});
+   await click('#edRows tr:nth-child(2) td:last-child');
+   assert.equal(await page.$eval('#edValue',n=>n.value),'name=draft\n');
+   await page.focus('#edRows tr:first-child button');await page.keyboard.press('Enter');
+   assert.equal(await page.$eval('#edName',n=>n.textContent),'firmware.rc');
+   assert.equal(await page.$eval('#edRows tr:first-child button',n=>n===document.activeElement),true);
+   await page.keyboard.press('Tab');await page.keyboard.press('Space');
+   assert.equal(await page.$eval('#edName',n=>n.textContent),'internal.dat');
+   assert.equal(await page.$eval('#edRows tr:nth-child(2) button',n=>n===document.activeElement),true);
+   assert.equal(await page.$$eval('#edRows button[aria-pressed="true"]',nodes=>nodes.length),1);
+   await click('#edRows tr:first-child button');
+  }
+  stage='Apply to selected SPC56 record';
+  await page.setViewport({width:1440,height:1100});
+  await click('#edRows tr:nth-child(2) td:nth-child(2)');
+  await page.$eval('#edValue',n=>{n.value='name=selected\n';});await click('#edApply');
+  await page.waitForFunction(()=>document.getElementById('fileName').textContent==='spc5668_edited.bin'&&!busy);
+  assert.equal(await page.$eval('#edName',n=>n.textContent),'internal.dat');
+  assert.equal(await page.$eval('#edValue',n=>n.value),'name=selected\n');
+  await click('#edRows tr:first-child td:nth-child(2)');
+  assert.equal(await page.$eval('#edValue',n=>n.value),'feature=off\n');
+  await click('#edUndo');
+  await page.waitForFunction(()=>document.getElementById('fileName').textContent==='spc5668.bin'&&!busy);
   await page.$eval('#edValue',n=>{n.value='feature=on\n';});await click('#edApply');
   await page.waitForFunction(()=>document.getElementById('fileName').textContent==='spc5668_edited.bin'&&!busy);
   assert.equal(await page.$eval('#edValue',n=>n.value),'feature=on\n');
@@ -108,7 +155,7 @@ async function click(selector){
    await page.screenshot({path:path.join(root,'test-results/editor',`editor-${width}.png`),fullPage:width===1440});
   }
   assert.equal(runRequests,0);assert.deepEqual(errors,[]);
-  console.log('SRecordizer browser passed: VCSEC0033 VIN/CRC/tail, immutable revisions, Undo/Redo, correct Write image, SPC5668 text/HEX, responsive layouts; no hardware jobs.');
+  console.log('SRecordizer browser passed: whole-row/keyboard selection at 1440/850/480 px, selected SPC56 edits, VCSEC0033 VIN/CRC/tail, immutable revisions, Undo/Redo, correct Write image, SPC5668 text/HEX, responsive layouts; no hardware jobs.');
  }catch(error){
   console.error('Editor stage:',stage);
   if(page){

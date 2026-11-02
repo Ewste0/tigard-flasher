@@ -45,6 +45,8 @@ window.SRecordizer = (() => {
       $("edRevision").textContent = file?.editor_changes?.length ? "EDITED IMAGE" : "ORIGINAL";
     }
     const enabled = ready && supported() && Boolean(file) && !busy;
+    $("edRows").setAttribute("aria-busy", String(busy));
+    for (const button of $("edRows").querySelectorAll("button")) button.disabled = !enabled;
     $("edSegmentRow").hidden = !file?.segments;
     if ($("edSegment").dataset.file !== file?.id) {
       $("edSegment").replaceChildren(...(file?.segments || []).map((s,i)=>new Option(`${i+1} · ${hex(s.address)} · ${sizeText(s.size)}`,String(i))));
@@ -61,6 +63,17 @@ window.SRecordizer = (() => {
     $("edValue").readOnly = !selected?.editable;
   }
   const records = () => parsed?.[$("edSection").value] || [];
+  function selectRecord(row) {
+    if (busy || row.id === selected?.id) return;
+    selected = row;
+    // Keep the row buttons in place so keyboard focus survives selection.
+    for (const tr of $("edRows").children) {
+      const active = tr.dataset.recordId === row.id;
+      tr.classList.toggle("selected", active);
+      tr.querySelector("button").setAttribute("aria-pressed", String(active));
+    }
+    inspect(); sync();
+  }
   function draw() {
     const section = $("edSection").value, raw = section === "bytes";
     $("edStructured").hidden = raw; $("edBytes").hidden = !raw;
@@ -75,10 +88,13 @@ window.SRecordizer = (() => {
     if (!list.some(row => row.id === selected?.id)) selected = list[0] || null;
     $("edRows").replaceChildren(...list.slice(0,500).map(row => {
       const tr = document.createElement("tr"); tr.classList.toggle("selected", row.id === selected?.id);
+      tr.dataset.recordId = row.id;
+      tr.onclick = () => selectRecord(row);
       const address = document.createElement("td"), name = document.createElement("td"), state = document.createElement("td");
-      const button = document.createElement("button"); button.textContent = hex(row.address);
+      const button = document.createElement("button"); button.type = "button"; button.textContent = hex(row.address);
       button.setAttribute("aria-label", `${row.name} at ${hex(row.address)}`);
-      button.onclick = () => { selected = row; draw(); };
+      button.setAttribute("aria-controls", "edInspector");
+      button.setAttribute("aria-pressed", String(row.id === selected?.id));
       address.append(button);
       if (row.parameter_id !== undefined) { const id = document.createElement("small"); id.textContent = `ID ${row.parameter_id.toString(16).toUpperCase().padStart(4,"0")}`; address.append(id); }
       name.textContent = row.name; state.textContent = row.state + (row.checksum_valid === false ? " · CRC error" : "");

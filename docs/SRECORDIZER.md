@@ -9,7 +9,8 @@ implementation; no vendor executable or customer dump is bundled.
 1. Select the actual MCU and open a dump. For BIN, set the physical address of
    file offset zero before scanning. S-record files carry their own addresses.
 2. Open SRecordizer and select Tesla parameters, VCSEC journal, SPC56 text or
-   HEX/ASCII. Select a record, edit its value and apply the change.
+   HEX/ASCII. Click anywhere in a record row to inspect it, or Tab to its address
+   button and press Enter/Space. Edit its value and apply the change.
 3. The new revision becomes the loaded image. Undo/Redo changes the selected
    revision without overwriting the original upload. Save with Export S19 or BIN.
 4. Review Write uses that revision's hash and the selected physical segment.

@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.9.1 — 2026-11-02
+
+- Make the entire SRecordizer record row clickable, including parameter names,
+  state cells and cell padding. Selecting firmware.rc or internal.dat now opens
+  the corresponding text in the inspector; the same selection works for VCSEC
+  and Tesla records.
+- Keep keyboard focus when selecting a record with Enter/Space, expose the
+  selected button state and show row hover/focus feedback. Clicking the selected
+  row again preserves pending text edits.
+- Add browser regressions for row and keyboard selection at 1440/850/480 px,
+  VCSEC record switching and applying changes to the selected SPC56 text block.
+
 ## 0.9.0 — 2026-11-02
 
 - Add SPC5668G/MPC5668G: 2 MiB CFLASH and 16 KiB SHADOW, physical Nexus memory

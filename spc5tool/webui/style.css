@@ -1608,8 +1608,13 @@ dialog::backdrop {
 .editor-list th:first-child { width:120px; }
 .editor-list th:last-child { width:90px; }
 .editor-list td { padding:12px; vertical-align:top; border-top:1px solid #edf1f7; overflow-wrap:anywhere; }
+.editor-list tbody:not([aria-busy="true"]) tr { cursor:pointer; }
+.editor-list tbody:not([aria-busy="true"]) tr:not(.selected):hover,.editor-list tr:not(.selected):focus-within { background:#f4f6ff; }
 .editor-list tr.selected { background:#eef2ff; }
+.editor-list tr.selected:hover,.editor-list tr.selected:focus-within { background:#e7edff; }
 .editor-list td button { border:0; padding:0; background:transparent; color:#3d58b6; font:11px var(--mono); cursor:pointer; text-align:left; }
+.editor-list td button:focus-visible { outline:2px solid #4965d8; outline-offset:4px; border-radius:2px; }
+.editor-list td button:disabled { cursor:default; }
 .editor-list td small { display:block; color:#8390a5; font:9px var(--mono); margin-top:5px; }
 .editor-detail { padding:20px; min-width:0; max-height:660px; overflow:auto; }
 .editor-detail h4 { margin:0 0 8px; font-size:14px; overflow-wrap:anywhere; }

@@ -1,5 +1,20 @@
 # Local release checks
 
+## 0.9.1 — 2026-11-02
+
+| Check | Result |
+| --- | --- |
+| Regression reproduction | Clicking the internal.dat name left firmware.rc selected before the fix |
+| Python suite | 299 passed |
+| Browser selection | Names, state cells, address buttons and cell padding select the correct record at 1440/850/480 px |
+| Keyboard and pending edits | Enter/Space select records without losing focus; clicking the current row preserves unapplied text |
+| Selected edits | internal.dat changes leave firmware.rc unchanged; Undo restores the source image |
+| Browser suite | VCSEC selection/VIN/CRC, Write review, wiring, scrolling and responsive layouts passed |
+| Packages | Wheel/sdist metadata, bundled UI assets, licenses and public-source checks passed; isolated installed-wheel CLI/UI smoke check passed |
+
+Checks used synthetic images and isolated test servers. No hardware operation
+was started. Existing hardware qualification limits are unchanged.
+
 ## 0.9.0 — 2026-11-02
 
 | Check | Result |

@@ -1,5 +1,15 @@
 # Validation and scope
 
+## SRecordizer selection — 0.9.1, 2026-11-02
+
+The reported internal.dat name click was reproduced in a browser: only the
+address button selected a record. Whole-row selection now updates the inspector
+and retains keyboard focus. Synthetic browser checks cover both SPC56 text
+blocks, VCSEC rows, cell padding, Enter/Space and 1440/850/480 px layouts.
+Applying a selected internal.dat edit leaves firmware.rc unchanged; clicking
+the selected row again preserves pending text. The complete Python and browser
+suites passed. This UI fix adds no hardware validation claims.
+
 ## SPC5668G and SRecordizer — 0.9.0, 2026-11-02
 
 SPC5668G/MPC5668G has its own C90FL geometry, physical Nexus access, dual-core
