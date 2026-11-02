@@ -42,6 +42,14 @@ B54/B60 use this connector drawing as a board reference only. Verify your actual
 board connector; it is not guaranteed by the MCU part number. No SPC560 hardware
 validation is claimed.
 
+## SPC5668G / MPC5668G
+
+The UI shows the JTAG signals and Tigard header, without assuming a board's
+10/14-pin connector assignment. Use the board schematic for the target pins.
+The selected reset lead drives RESET, and the other lead holds JCOMP high.
+TDI/TDO/TCK/TMS, common ground and target debug voltage reference are required.
+See [SPC5668 implementation and validation](SPC5668.md).
+
 ## SPI W25Q128JV
 
 Use Tigard's SPI header, not its JTAG header. Follow the interactive eight-pin

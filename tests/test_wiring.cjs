@@ -24,6 +24,16 @@ for (const [id, pin] of [["tdi",8], ["tdo",6], ["clock",4], ["mode",2], ["reset"
 assert.deepEqual(miniRows.ground.pins, [3,5]);
 for (const unused of [7,9]) assert(!generic.rows.some(row => row.pins.includes(unused)));
 assert(!generic.rows.some(row => row.id === "jcomp"));
+for (const reset of ['srst','trst']) {
+  const guide = wiringGuide('spc5668g', reset);
+  assert.equal(guide.hasJcomp, true);
+  assert.equal(guide.pins.length, 0);
+  assert.equal(guide.reference, null);
+  assert.match(guide.title, /JTAG signals/);
+  assert.equal(guide.rows.find(r => r.id === 'reset').adapter, reset.toUpperCase());
+  assert.notEqual(guide.rows.find(r => r.id === 'reset').adapterPin, guide.rows.find(r => r.id === 'jcomp').adapterPin);
+  assert(guide.rows.every(r => r.pins.length === 0));
+}
 const spi = wiringGuide("w25q128jv");
 assert.deepEqual(spi.pins.map(p => p[0]), [1,8,2,7,3,6,4,5]);
 assert(!spi.rows.some(row => ["reset", "jcomp"].includes(row.id)));

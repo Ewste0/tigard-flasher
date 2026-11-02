@@ -20,6 +20,7 @@ from .usb_backend import usb_error_message
 from .errors import DriverError
 from .files import save_backup, sha256, write_new
 from .images import decode_image, MAX_IMAGE, MAX_UPLOAD, SREC_SUFFIXES
+from .editor import DumpDocument, EDITOR_TARGETS, read_segments
 from .flash import Flash
 from .geometry import Block, backup_blocks, blocks_for, select_blocks, validate_program_range, erase_groups, speed_blocks
 from .idcode import read_idcode
@@ -35,6 +36,7 @@ STATIC_ASSETS = {"/": ("index.html", "text/html; charset=utf-8"),
                  "/style.css": ("style.css", "text/css"),
                  "/app.js": ("app.js", "text/javascript"),
                  "/wiring.js": ("wiring.js", "text/javascript"),
+                 "/editor.js": ("editor.js", "text/javascript"),
                  "/assets/tigard-render.png": ("assets/tigard-render.png", "image/png"),
                  "/assets/spc560-10pin.svg": ("assets/spc560-10pin.svg", "image/svg+xml"),
                  "/assets/jtag-14pin.svg": ("assets/jtag-14pin.svg", "image/svg+xml")}
@@ -56,6 +58,7 @@ def catalog():
         targets.append({"key": chip.key, "name": chip.part, "alias": chip.nxp_twin,
                         "protocol": "JTAG", "core": chip.core,
                         "read_only": chip.read_only, "read_presets": chip.read_presets,
+                        "editor": chip.key in EDITOR_TARGETS,
                         "program_unit": chip.program_unit, "password_bits": chip.password_bits,
                         "password_install": chip.algorithm in ("c90-b", "c55-mpc5748", "c55-spc58h"),
                         "password_login": bool(chip.password_protocol),
@@ -101,6 +104,16 @@ class Workspace:
         self.reset_pin = reset_pin
         self.files, self.plans, self.jobs = {}, {}, {}
         self._plan_secrets = {}
+        self.editor_catalog = None
+        catalog_path = self.directory / 'srecordizer-catalog.json'
+        if catalog_path.is_file() and catalog_path.stat().st_size <= 1024 * 1024:
+            try:
+                candidate = json.loads(catalog_path.read_text())
+                from .srecordizer import validate_catalog
+                validate_catalog(candidate)
+                self.editor_catalog = candidate
+            except (ValueError, OSError):
+                pass
         self.lock = threading.RLock()
         self.active = None
         self.adapter_selection = None  # Automatic; an explicit UI choice stays pinned.
@@ -208,6 +221,111 @@ class Workspace:
                         item["name"] = name
             return {**info, "name": name}
 
+    def _editor_document(self, request):
+        if request.get('target') not in EDITOR_TARGETS:
+            raise ValueError('SRecordizer is available for SPC560B64L3 and SPC5668G')
+        info, path = self.file(request.get('file_id'))
+        if info['kind'] == 'backup':
+            raise ValueError('open a dump image, not a backup archive')
+        if request.get('sha256') != info['sha256']:
+            raise ValueError('editor image changed; reload it before editing')
+        data = path.read_bytes()
+        if len(data) != info['size'] or sha256(data) != info['sha256']:
+            raise ValueError('stored image changed; upload the original again')
+        base = number(request.get('base', 0), 'binary base address')
+        if info.get('editor_target') and info['editor_target'] != request['target']:
+            raise ValueError('edited image belongs to a different target; open the original for this target')
+        if info.get('editor_base') is not None and not info.get('segments') and base != info['editor_base']:
+            raise ValueError('edited binary has a fixed destination address; restore its original base')
+        source = path.with_suffix('.source').read_bytes() if info.get('format') == 'srec' else data
+        if info.get('format') == 'srec' and (len(source) != info['source_size'] or sha256(source) != info['source_sha256']):
+            raise ValueError('stored S-record source changed; upload it again')
+        doc = DumpDocument(info['name'], source, base)
+        if doc.image.data != data:
+            raise ValueError('S-record source differs from the loaded image')
+        return info, doc
+
+    def editor(self, action, request):
+        if action == 'catalog':
+            from .srecordizer import validate_catalog
+            value = request.get('catalog')
+            if not isinstance(value, list) or len(value) > 4096 or not all(isinstance(row, dict) for row in value):
+                raise ValueError('catalog must be a JSON array of parameter descriptions')
+            validate_catalog(value)
+            raw = json.dumps(value, ensure_ascii=False).encode()
+            if len(raw) > 1024 * 1024:
+                raise ValueError('catalog exceeds 1 MiB')
+            with self.lock:
+                if self.active:
+                    raise ValueError('wait for the active operation before changing the catalog')
+                path = self.directory / 'srecordizer-catalog.json'
+                temporary = path.with_suffix('.tmp')
+                temporary.write_bytes(raw)
+                temporary.replace(path)
+                self.editor_catalog = value
+            return {'entries': len(value)}
+        info, doc = self._editor_document(request)
+        if action == 'analyze':
+            from .srecordizer import analyze
+            force = request.get('force_tesla', False)
+            if type(force) is not bool:
+                raise ValueError('force_tesla must be a boolean')
+            analysis = analyze(doc.segments, force_tesla=force, catalog=self.editor_catalog)
+            return {**analysis, 'file_id': info['id'], 'sha256': info['sha256'],
+                    'document': doc.info(), 'catalog_loaded': self.editor_catalog is not None}
+        if action == 'read':
+            size = number(request.get('length', 32), 'editor read length', 65536)
+            address = number(request.get('address'), 'editor read address')
+            return {'address': address, 'value_hex': read_segments(doc.segments, address, size).hex().upper()}
+        if action == 'search':
+            return doc.search(request.get('find_hex'))
+        if action not in ('apply', 'export'):
+            raise ValueError('unknown editor operation')
+        with self.lock:
+            if self.active:
+                raise ValueError('wait for the active hardware operation before changing the loaded image')
+            suffix = '.s19' if doc.image.segments else '.bin'
+            base_name = Path(info['name']).stem.removesuffix('_edited')
+            if action == 'apply':
+                change = request.get('change')
+                if not isinstance(change, dict):
+                    raise ValueError('expected an edit operation')
+                segments = doc.apply(change, catalog=self.editor_catalog)
+                changes = doc.changed(segments)
+                if not changes:
+                    return {'file': info, 'changed_bytes': 0, 'changed_segments': [], 'message': 'No bytes changed.'}
+                output = doc.serialize(segments)
+                output_name = base_name + '_edited' + suffix
+                changed_bytes = sum(row['changed_bytes'] for row in changes)
+                inherited = {row['address']: row for row in info.get('editor_changes', [])}
+                inherited.update({row['address']: {'address': row['address'], 'size': row['size']} for row in changes})
+                edit_ranges = list(inherited.values())
+            else:
+                format_name = request.get('format')
+                if format_name == 'srec':
+                    output, suffix = doc.export_srec(), '.s19'
+                    base = doc.raw_base
+                    edit_ranges = info.get('editor_changes', [])
+                elif format_name == 'bin':
+                    index = number(request.get('segment', 0), 'export segment', len(doc.segments) - 1)
+                    base, output = doc.segments[index]
+                    suffix = '.bin'
+                    edit_ranges = [row for row in info.get('editor_changes', []) if row['address'] == base]
+                else:
+                    raise ValueError('choose S-record or BIN export')
+                output_name = base_name + ('_edited' if edit_ranges else '') + suffix
+            derived = self.add_file(output_name, output)
+            metadata = {'editor_target': request['target'], 'editor_base': doc.raw_base if action == 'apply' else base,
+                        'editor_changes': edit_ranges, 'parent_id': info['id']}
+            self.files[derived['id']].update(metadata)
+            # Existing plans keep their original immutable files. They cannot
+            # silently flash the old revision after an edit in this session.
+            self.plans.clear()
+            self._plan_secrets.clear()
+            return {'file': {**derived, **metadata},
+                    **({'changed_bytes': changed_bytes, 'changed_segments': changes,
+                        'message': f'{changed_bytes:,} bytes changed. Image ready for review.'} if action == 'apply' else {})}
+
     def cancel_job(self, key):
         with self.lock:
             job = self.snapshot(key)
@@ -285,6 +403,10 @@ class Workspace:
             info, _ = self.file(file_id)
             if info["kind"] == "backup":
                 raise ValueError("a backup archive is not a raw firmware image")
+            if info.get('editor_target') and info['editor_target'] != target:
+                raise ValueError('edited image is bound to a different MCU profile')
+            if info.get('editor_base') is not None and not info.get('segments') and address != info['editor_base']:
+                raise ValueError(f"edited binary requires its original address 0x{info['editor_base']:08X}")
             size = info["size"]
             if info.get("format") == "srec":
                 segment_index = request.get("segment")
@@ -346,6 +468,10 @@ class Workspace:
                 plan["notes"].append("Erase the complete selected range, then program non-FF 8-byte units with PGM retained between pulses. Progress counts programmed non-FF bytes; FF units are skipped.")
         if segment_index is not None:
             plan["notes"].append(f"S-record segment {segment_index + 1}/{len(info['segments'])}, using its original address. Only this segment is selected; gaps and other segments are not programmed.")
+            other_edits = [row for row in info.get('editor_changes', [])
+                           if row['address'] != address]
+            if other_edits:
+                plan['notes'].append(f"This image also has edits in {len(other_edits)} other segment(s); review and write each intended segment separately.")
         if fast_read:
             plan["notes"].append(f"Queued CFLASH read; {read_delay_us} microsecond settling delay. Every word's status is checked; a target that is not ready falls back to standard reads.")
             if action in ("write", "program"):
@@ -734,7 +860,8 @@ class Handler(BaseHTTPRequestHandler):
             query = parse_qs(url.query)
             workspace = self.server.workspace
             if post:
-                limit = MAX_UPLOAD if path == "/api/files" else 32768
+                limit = (MAX_UPLOAD if path == "/api/files" else
+                         2 * 1024 * 1024 if path.startswith('/api/editor/') else 32768)
                 length = number(self.headers.get("Content-Length", "0"), "content length", limit)
                 body = self.rfile.read(length)
                 if len(body) != length:
@@ -757,6 +884,8 @@ class Handler(BaseHTTPRequestHandler):
                         response = workspace.cancel_job(request.get("job_id"))
                     elif path == "/api/adapter":
                         response = workspace.select_adapter(request.get("url"))
+                    elif path.startswith('/api/editor/'):
+                        response = workspace.editor(path.rsplit('/', 1)[1], request)
                     else:
                         self._send(404, {"error": "not found"})
                         return

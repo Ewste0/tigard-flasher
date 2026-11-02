@@ -48,6 +48,7 @@ class Chip:
     core_selectors: tuple = ()
     nexus_access: int = 0
     idcodes: tuple = ()
+    idcode_mask: int = 0xFFFFFFFF
     algorithm: str = "c90-b"
     program_unit: int = 8
     password_bits: int = 64
@@ -91,6 +92,42 @@ SPC560B64 = Chip(
         "No JCOMP pin: JTAGC always enabled.",
         "Single core: ACCESS_AUX_TAP_ONCE unambiguously targets the one core.",
         "Memory access uses CPUSCR VLE injection with a Boot Assist ROM fetch; no scratch SRAM.",
+    ),
+)
+
+# NXP SPC5668G orderables use the MPC5668G silicon. MPC5668xRM Rev. 4:
+# Tables 1-3/11-1 (physical map), 34-1/34-2 (IDCODE/TAP), chapter 35 (Nexus).
+# The P&E 0x30000000 loader window is an effective MMU mapping, NOT this
+# device's physical flash address. Nexus accesses the physical map directly.
+SPC5668G = Chip(
+    key="spc5668g", part="SPC5668G / MPC5668G", nxp_twin="MPC5668G",
+    family="MPC5668G (C90FL)", core="e200z6 + e200z0",
+    jtagc_irlen=5, once_irlen=10, has_jcomp=True, has_mmu=True,
+    sram_base=0x40000000, flash_ctrl={"CFLASH": 0xFFFF8000, "SWT": 0xFFF38000},
+    algorithm="c90-fl", program_unit=8,
+    core_selectors=(0x11, 0x19), nexus_access=0,
+    idcodes=(0x0826801D,), idcode_mask=0x0FFFFFFF,
+    # RM8: this 64-bit password belongs to SERIAL boot, not a JTAG scan.
+    password_bits=64, password_protocol="",
+    buffering=((0xFFFF801C, 0x51), (0xFFFF8020, 0x51)),
+    regions=(
+        FlashRegion("CFLASH", 0, 0x200000,
+                    "Low: 8×16 KiB + 2×64 KiB; Mid: 2×128 KiB; High: 6×256 KiB"),
+        FlashRegion("SHADOW", 0xFFC000, 0x4000,
+                    "Single censorship word at 0x00FFFDE0; preserve uncensored boot and configuration.",
+                    "shadow"),
+    ),
+    read_presets=(
+        {"key": "cflash", "name": "CFLASH · 2 MiB", "address": 0,
+         "size": 0x200000, "filename": "SPC5668G_CFLASH"},
+        {"key": "shadow", "name": "SHADOW · 16 KiB", "address": 0xFFC000,
+         "size": 0x4000, "filename": "SPC5668G_SHADOW"},
+    ),
+    notes=(
+        "Offline validated; live SPC5668G qualification is pending.",
+        "JCOMP must be high. Both cores are halted; memory uses physical Nexus access.",
+        "Uncensored targets only. Serial boot passwords are not JTAG passwords; login/install is unavailable.",
+        "No separate DFLASH or OTP region is documented for this profile.",
     ),
 )
 
@@ -204,7 +241,7 @@ SPC58EH92 = replace(SPC58NH92, key="spc58eh92", part="SPC58EH92",
                     read_presets=tuple({**p, "filename": p["filename"].replace("NH", "EH")}
                                        for p in SPC58NH92.read_presets))
 
-CHIPS = {c.key: c for c in (SPC560B64, SPC560B54, SPC560B60, SPC5748G, SPC58NH92, SPC58EH92)}
+CHIPS = {c.key: c for c in (SPC560B64, SPC560B54, SPC560B60, SPC5668G, SPC5748G, SPC58NH92, SPC58EH92)}
 
 
 def get(key: str) -> Chip:

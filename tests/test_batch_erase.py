@@ -83,6 +83,7 @@ class BatchEraseTests(unittest.TestCase):
             "spc560b54": (0x3003F, 0x03),
             "spc560b60": (0x3003F, 0x0F),
             "spc560b64": (0x3003F, 0xFF),
+            "spc5668g": (0x303FF, 0x3F),
             "spc5748g": (0x017C03FF, 0, 0x003FFFFF, 0),
             "spc58nh92": (0x03DE0000, 0, 0xFFFFFFFF, 0xFF),
             "spc58eh92": (0x03DE0000, 0, 0xFFFFFFFF, 0xFF),
@@ -120,6 +121,9 @@ class BatchEraseTests(unittest.TestCase):
                 starts = (0x8000, 0x40000, 0x80000, end - 0x20000)
                 high = {"spc560b54": 0x3, "spc560b60": 0x9, "spc560b64": 0x81}[chip.key]
                 masks = (0x10002, high)
+            elif chip.key == "spc5668g":
+                starts = (0x4000, 0x30000, 0x40000, 0x80000, 0x1C0000)
+                masks = (0x10202, 0x21)
             elif chip is SPC5748G:
                 starts = (0xF94000, 0xFC8000, 0x1000000, 0x1540000)
                 masks = (0x00080002, 0, 0x00200001, 0)
@@ -144,10 +148,10 @@ class BatchEraseTests(unittest.TestCase):
             ordinary = [b for b in blocks_for(chip) if b.kind == "flash"]
             groups = erase_groups(ordinary)
             self.assertEqual(sum(len(group) for group in groups), len(ordinary))
-            self.assertEqual(len(groups), 1 if chip is SPC5748G else 2)
+            self.assertEqual(len(groups), 1 if chip.key in ("spc5748g", "spc5668g") else 2)
             for group in groups:
                 self.assertEqual(len({(b.controller, b.region) for b in group}), 1)
-            if chip.algorithm == "c90-b":
+            if chip.algorithm in ("c90-b", "c90-fl"):
                 shadow = next(b for b in blocks_for(chip) if b.kind == "shadow")
                 shadow_group, = [g for g in erase_groups([ordinary[0], shadow, ordinary[-1]])
                                 if shadow in g]
@@ -155,7 +159,7 @@ class BatchEraseTests(unittest.TestCase):
 
     def test_successive_code_and_data_groups_clear_stale_selectors(self):
         for chip in CHIPS.values():
-            if chip is SPC5748G:
+            if not any(r.name == "DFLASH" for r in chip.regions):
                 continue
             with self.subTest(chip=chip.key):
                 selected = []

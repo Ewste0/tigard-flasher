@@ -1,5 +1,22 @@
 # Local release checks
 
+## 0.9.0 — 2026-11-02
+
+| Check | Result |
+| --- | --- |
+| Python suite | 299 passed |
+| SPC5668G | Physical geometry, two-core wire path, reset order, IDCODE, preparation, 16/8-byte programming, grouped erase and failures |
+| SHADOW | Single censorship word, preserved configuration tail, ordinary-array isolation, lock restoration and safe Stop |
+| Parser/editor | CRC8/CRC32, VIN 0033 tail preservation, journal state/schema, key/certificate/text handling, sparse S-record roundtrip |
+| HTTP | Immutable revisions, hash and source checks, stale plan rejection, fixed target/base, edited bytes sent through modeled Write |
+| Browser | Wiring with both reset leads, 16 MiB scroll, editor VIN/Undo/Redo/Write selection, SPC5668 text/HEX and 1440/850/480 px layouts |
+| Private comparison | Nine Swift-parser corpus files: 125 VCSEC entries / 96 current; separate supplied 0033 dump validated without modifying source |
+| Public-source checks | No forbidden inputs or broken relative links; optional 119-entry catalog kept in ignored local storage |
+| Packages | Wheel/sdist and metadata checks passed; isolated installed wheel serves all eight UI assets and recognizes SPC5668 CLI alias |
+
+No physical MCU was opened. Live SPC5668G operation, edited firmware acceptance
+and performance equivalence to PROGPPCNEXUS still require bench testing.
+
 ## 0.8.0 — 2026-10-26
 
 | Check | Result |

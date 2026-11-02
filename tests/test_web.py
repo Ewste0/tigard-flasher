@@ -89,7 +89,7 @@ class WebTests(unittest.TestCase):
             with urllib.request.urlopen(self.url + path) as response:
                 self.assertEqual(response.headers.get_content_type(), mime)
                 self.assertTrue(response.read().startswith(signature))
-        self.assertEqual(len(state["targets"]), 7)
+        self.assertEqual(len(state["targets"]), 8)
         self.assertEqual(self.call("/../web.py")[0], 404)
         self.assertEqual(self.call("/assets/../../web.py")[0], 404)
         self.assertEqual(self.call("/api/demo", {})[0], 404)

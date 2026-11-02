@@ -49,6 +49,9 @@ Screenshot uses generated test bytes; no firmware or connected target is shown.
   named saves, SHA-256, drag-and-drop, and cancellable reads. MCU Write/Erase/Program
   keep Stop available after modifications start: the current flash pulse and
   lock restoration finish first. SHADOW rebuilding finishes before stopping.
+- SRecordizer for SPC560B64L3 and SPC5668G: Tesla parameters, VCSEC journal,
+  SPC56 text, HEX/ASCII edits, VIN (including VCSEC `0033`), Undo/Redo and BIN/S19
+  export. Structured edits update supported checksums; Write reviews the new image.
 - Interactive Tigard/14-pin/10-pin/SPI wiring guides, USB presence, and target identification.
 - Reviewed write plans; Standard mode includes original-block backups (OTP:
   affected units) with checksums, preserved bytes outside a patch, and automatic verification.
@@ -59,6 +62,7 @@ Screenshot uses generated test bytes; no firmware or connected target is shown.
 | `spc560b54` / `mpc5605b` | 768 KiB CFLASH, 64 KiB DFLASH | 16 KiB SHADOW, 8 KiB CFLASH_OTP, 8 KiB DFLASH_OTP |
 | `spc560b60` / `mpc5606b` | 1024 KiB CFLASH, 64 KiB DFLASH | Same SHADOW and OTP regions as B54 |
 | `spc560b64` / `mpc5607b` | 1536 KiB CFLASH, 64 KiB DFLASH | Same SHADOW and OTP regions as B54 |
+| `spc5668g` / `mpc5668g` | 2 MiB CFLASH | 16 KiB SHADOW; uncensored targets only; offline validation |
 | `spc58nh92`, `spc58eh92` (cut 2.0) | 10 MiB CFLASH, 256 KiB DFLASH | 16 KiB UTEST with 4 KiB customer OTP; BAF and HSM read-only |
 | SPI `w25q128jv` | 16 MiB; JEDEC `EF4018` | SPI security registers are not supported |
 
@@ -128,6 +132,36 @@ for separate sessions and `--port PORT` if the port is occupied. Run one server
 per workspace and adapter. Stop with Ctrl+C; an active operation is allowed to
 finish. The server accepts loopback clients only; it is not a hosted multiuser service.
 
+## Edit a dump
+
+Select **SPC560B64L3** or **SPC5668G**, open a BIN/S-record file and select
+**SRecordizer**. S-record addresses stay fixed; for BIN, set its physical start
+address before scanning. Select a parameter or text block, edit it and apply.
+The modified image becomes the current buffer; the original stays available
+through Undo. **Export S19** preserves sparse addresses; **Export BIN** exports
+only the selected segment. **Review Write** opens the normal target/range review.
+Sparse images require a separate Write for each intended segment.
+
+VCSEC `0033` VIN editing supports the validated format-1/schema-1, 21-byte value:
+17 VIN characters followed by four preserved bytes. It updates the journal CRC32
+and S-record checksums. Historical/deleted, invalid-CRC and unsupported records
+are read-only in structured mode. Raw HEX/ASCII edits deliberately do not repair
+internal firmware checksums. Certificate edits do not generate signatures.
+
+**Import names** accepts a local SRecordizer parameter-catalog JSON. The public
+package includes generic names and known record roles; it does not redistribute
+an extracted proprietary dictionary. See [editor details](docs/SRECORDIZER.md).
+Edited files are bound to the selected MCU and original address, and previous
+Write reviews are invalidated. Standard Write preserves partial-block neighbors;
+SPC560B64 Speed requires complete blocks and does not automatically verify.
+
+SPC5668G uses its own C90FL map, dual-core debug selection and physical Nexus
+access. CFLASH programming combines two nonblank ECC units into a 16-byte page
+where possible. Its SHADOW has one censorship word, unlike SPC560B. A serial-boot
+password is not a JTAG password, so login/install are unavailable for this profile.
+No separate DFLASH or OTP is documented. Live SPC5668G validation is pending;
+see [the driver evidence](docs/SPC5668.md).
+
 ## CLI
 
 ```sh
@@ -138,7 +172,7 @@ python3 -m spc5tool read mpc5748g config.bin --address 0xFA8000 --length 0x8000 
 python3 -m spc5tool spi info w25q128jv
 ```
 
-Use raw `.bin` or Motorola S-record images (`.S19`, `.s28`, `.s37`, `.srec`, `.mot`).
+Use raw `.bin` or Motorola S-record images (`.S19`, `.s28`, `.s37`, `.srec`, `.mot`, `.mhx`).
 S-record checksums, lengths and overlaps are checked before an operation can be
 planned. The viewer shows decoded bytes at their physical addresses. Loading a
 segment sets its original start address and length; it cannot be relocated.

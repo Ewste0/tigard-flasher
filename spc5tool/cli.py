@@ -20,6 +20,7 @@ from .spi import SpiNor, PARTS
 from .security import parse_password, password_address, provision, installation_message
 
 ALIASES = {"mpc5607b": "spc560b64", "spc560b64l3": "spc560b64",
+           "spc5668": "spc5668g", "mpc5668": "spc5668g", "mpc5668g": "spc5668g",
            "mpc5605b": "spc560b54", "mpc5606b": "spc560b60",
            "mpc5748g": "spc5748g", "spc5748gsmmj6": "spc5748g", "spc58nh": "spc58nh92"}
 MUTATING = {"write", "erase", "program", "install-password"}

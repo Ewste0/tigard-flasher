@@ -1,9 +1,14 @@
 # OTP, SHADOW and passwords
 
-This document describes version 0.7.6. Most OTP/password paths have only offline
+Updated for version 0.9.0. Most OTP/password paths have only offline
 tests. One MPC5748G has limited UTEST and installed-password checks; see
 [VALIDATION.md](VALIDATION.md). Unlocking a protected MPC5748G is not yet bench
 validated.
+
+SPC5668G has a **serial-boot** 64-bit password, not the SPC560 JTAG censorship
+password protocol. JTAG password login/install are disabled. Its single SHADOW
+censorship word must keep CW = `55AA` in its high halfword; no separate OTP or
+DFLASH is exposed. See [SPC5668 evidence and limits](SPC5668.md).
 
 ## Region operations
 
@@ -12,6 +17,7 @@ validated.
 | SPC560 CFLASH, DFLASH | Yes | Erased 8-byte units | Yes |
 | SPC560 SHADOW | Yes | Erased 8-byte units, with configuration validation | Preserves valid boot/security configuration |
 | SPC560 CFLASH_OTP, DFLASH_OTP | Yes | Once per erased 8-byte ECC unit | Not supported by silicon |
+| SPC5668G CFLASH / SHADOW | Yes, uncensored targets | 8-byte ECC units; aligned 16-byte CFLASH pages | Yes; preserve and validate SHADOW configuration |
 | MPC5748 CFLASH | Yes | Erased 8-byte units | Yes |
 | MPC5748 UTEST | Exclude factory ECC tests; subject to read protection | Customer OTP only, erased 8-byte units; passwords via Install password | Not supported by silicon |
 | SPC58NH92/EH92 CFLASH, DFLASH | Yes | Erased 16-byte units | Yes |

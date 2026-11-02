@@ -58,7 +58,7 @@ class StopFlashTests(unittest.TestCase):
                     memory, flash, locks = self.setup_flash(chip, 0x10)
                     flash.bulk_program = bulk
                     block = next(b for b in blocks_for(chip) if b.region == 'CFLASH')
-                    unit = 128 if bulk else chip.program_unit
+                    unit = 128 if bulk else (16 if chip.key == 'spc5668g' else chip.program_unit)
                     with self.assertRaises(StopRequested):
                         flash.program(block.address, b'\xA5' * (unit * 2))
                     self.assert_idle_and_locked(memory, locks)
@@ -77,11 +77,13 @@ class StopFlashTests(unittest.TestCase):
                 self.assert_idle_and_locked(memory, locks)
                 self.assertEqual(backup, [(block, b'\x12' * block.size)])
                 self.assertEqual([p[1] for p in memory.pulses], [4, 0x10])
-                unit = chip.program_unit
+                unit = 16 if chip.key == 'spc5668g' else chip.program_unit
                 self.assertEqual(memory.read(block.address, unit * 2), b'\xA5' * unit + b'\xff' * unit)
 
     def test_otp_stop_does_not_reuse_or_program_next_unit(self):
         for chip in CHIPS.values():
+            if not any(r.kind == 'otp' for r in chip.regions):
+                continue
             with self.subTest(chip=chip.key):
                 memory, flash, locks = self.setup_flash(chip, 0x10)
                 address = 0x400000 if chip.algorithm == 'c90-b' else 0x401000

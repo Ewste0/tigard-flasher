@@ -71,7 +71,9 @@ class TargetSession:
             self.idcode = decode(tap.read_idcode())
             if not self.idcode.valid_ieee:
                 raise DriverError(str(self.idcode))
-            if self.chip.idcodes and self.idcode.raw not in self.chip.idcodes:
+            if self.chip.idcodes and not any(
+                    self.idcode.raw & self.chip.idcode_mask == code & self.chip.idcode_mask
+                    for code in self.chip.idcodes):
                 raise DriverError(f"IDCODE mismatch for {self.chip.part}: 0x{self.idcode.raw:08x}")
             if self.expected_id is not None and self.idcode.raw != self.expected_id:
                 raise DriverError(f"IDCODE mismatch: expected 0x{self.expected_id:08x}, got 0x{self.idcode.raw:08x}")

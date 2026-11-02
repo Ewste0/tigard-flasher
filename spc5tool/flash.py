@@ -227,7 +227,7 @@ class Flash:
             with self.stage("preserve shadow configuration", 0, 0.1):
                 original = self.read(address, size)
             from .security import validate_shadow
-            validate_shadow(original)
+            validate_shadow(original, self.chip)
             with self.defer_cancellation():
                 with self.stage("erase shadow user area", 0.1, 0.8):
                     self._erase(address, size)
@@ -402,7 +402,7 @@ class Flash:
                     proposed = bytearray(self.read(block.address, block.size))
                 lo, hi = max(address, block.address), min(address + len(data), block.end)
                 proposed[lo - block.address:hi - block.address] = data[lo - address:hi - address]
-                validate_shadow(proposed)
+                validate_shadow(proposed, self.chip)
         # Preflight the entire image before the first modification.
         with self.stage("blank preflight", 0, 0.1):
             existing = self.read(address, len(data))
@@ -438,6 +438,12 @@ class Flash:
                         and dest % 128 == 0 and offset + 128 <= len(data) and dest + 128 <= block.end
                         and all(data[n:n + unit] != b"\xff" * unit for n in range(offset, offset + 128, unit))):
                     count = 128
+                elif (self.chip.key == "spc5668g" and block.kind == "flash"
+                      and dest % 16 == 0 and offset + 16 <= len(data) and dest + 16 <= block.end
+                      and all(data[n:n + 8] != b"\xff" * 8 for n in (offset, offset + 8))):
+                    # MPC5668xRM 11.4.1.3: four words per page, two 64-bit
+                    # ECC units. Never cross a page or consume a blank unit.
+                    count = 16
                 word = data[offset:offset + count]
                 if word != b"\xff" * count:
                     with self._operation(blocks[block_index].controller, PGM):
@@ -485,7 +491,7 @@ class Flash:
                 proposed = bytearray(original)
                 lo, hi = max(address, block.address), min(address + len(data), block.end)
                 proposed[lo - block.address:hi - block.address] = data[lo - address:hi - address]
-                validate_shadow(proposed)
+                validate_shadow(proposed, self.chip)
         for index, (block, original) in enumerate(originals):
             patched = bytearray(original)
             lo, hi = max(address, block.address), min(address + len(data), block.end)

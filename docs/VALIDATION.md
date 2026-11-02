@@ -1,5 +1,35 @@
 # Validation and scope
 
+## SPC5668G and SRecordizer — 0.9.0, 2026-11-02
+
+SPC5668G/MPC5668G has its own C90FL geometry, physical Nexus access, dual-core
+selection and single-word SHADOW censorship validation. A bit-clocked JTAG model
+covers the complete attach/program/read-back path, error propagation and reset
+ordering. Controller tests cover grouped erase, 16-byte page/8-byte fallback,
+locks, configuration preservation and Stop. JTAG password operations are rejected
+before USB: the documented 64-bit password is for serial boot. Separate DFLASH
+and OTP are not invented. [Evidence and limitations](SPC5668.md).
+
+The SRecordizer panel supports SPC560B64L3 and SPC5668G. Synthetic parser tests
+cover Tesla CRC8, VCSEC CRC32/current/history/schema handling, VIN, key slots,
+certificate blobs, text bounds and unsupported records. HTTP tests exercise
+immutable edits, stale review invalidation, source/hash checks, physical segment
+export and the full edited-image-to-Write flow using an isolated device model.
+Browser tests verify 0033 VIN/CRC/tail preservation, Undo/Redo, exact reviewed file
+hash/range, SPC5668 text/HEX and layouts at 1440, 850 and 480 px. No hardware job
+is allowed by the editor browser test.
+
+Private validation matched the supplied Swift parser across nine S-records,
+125 VCSEC records and 96 current records. A separate supplied DFlash image has
+current, valid-CRC 0033 at `0x00805670`: VIN begins at `0x0080568C`, followed by four
+opaque bytes. An in-memory VIN change repaired CRC and S-record checksums while
+preserving those bytes, all other records and the original file. This establishes
+the supported format-1/schema-1 layout, not every possible 0033 firmware variant.
+[Editor workflow and limits](SRECORDIZER.md).
+
+All validation in this update is offline. No physical SPC5668 read/write,
+firmware acceptance after editing, or performance parity with P&E is claimed.
+
 ## SPC560B64L3 Speed Write/Erase — 0.8.0, 2026-10-26
 
 The user requested speed without backups. Speed is limited to complete ordinary

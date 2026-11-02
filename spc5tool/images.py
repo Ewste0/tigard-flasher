@@ -4,7 +4,7 @@ from pathlib import Path
 
 MAX_IMAGE = 16 * 1024 * 1024
 MAX_UPLOAD = 64 * 1024 * 1024
-SREC_SUFFIXES = {'.s19', '.s28', '.s37', '.srec', '.srecord', '.mot'}
+SREC_SUFFIXES = {'.s19', '.s28', '.s37', '.srec', '.srecord', '.mot', '.mhx'}
 ADDRESS_BYTES = {'0': 2, '1': 2, '2': 3, '3': 4, '5': 2, '6': 3, '7': 4, '8': 3, '9': 2}
 
 

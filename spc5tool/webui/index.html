@@ -4,7 +4,7 @@
   <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light"><title>Tigard Flasher</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Crect width='40' height='40' rx='10' fill='%233d5fd3'/%3E%3Cpath d='M10 12h20v5h-7v13h-6V17h-7z' fill='white'/%3E%3C/svg%3E">
-  <link rel="stylesheet" href="/style.css"><script src="/wiring.js" defer></script><script src="/app.js" defer></script>
+  <link rel="stylesheet" href="/style.css"><script src="/wiring.js" defer></script><script src="/app.js" defer></script><script src="/editor.js" defer></script>
 </head>
 <body>
   <header class="titlebar">
@@ -16,7 +16,7 @@
     <button id="saveButton" data-icon="save" disabled>Save dump</button>
     <button id="identifyButton" data-icon="scan">Identify target</button>
     <span class="toolbar-spacer"></span><button id="logButton" data-icon="terminal" aria-expanded="true">Session log</button>
-    <input type="file" id="fileInput" accept=".bin,.rom,.img,.dump,.s19,.s28,.s37,.srec,.srecord,.mot,application/octet-stream" hidden>
+    <input type="file" id="fileInput" accept=".bin,.rom,.img,.dump,.s19,.s28,.s37,.srec,.srecord,.mot,.mhx,application/octet-stream" hidden>
   </nav>
   <div class="operation-toolbar" aria-label="Flash operations">
     <span class="toolbar-label">FLASH TOOLS</span>
@@ -65,7 +65,7 @@
     </aside>
     <div class="workspace">
       <section class="panel buffer-panel">
-        <div class="workspace-heading"><div><span class="eyebrow">FLASH WORKSPACE</span><h1 id="workspaceTitle">Binary buffer</h1></div><div class="view-tabs" role="tablist" aria-label="Workspace view"><button id="bufferTab" role="tab" aria-selected="true" aria-controls="bufferView">Buffer</button><button id="mapTab" role="tab" aria-selected="false" aria-controls="mapView">Memory map</button><button id="wiringTab" role="tab" aria-selected="false" aria-controls="wiringView">Wiring</button></div></div>
+        <div class="workspace-heading"><div><span class="eyebrow">FLASH WORKSPACE</span><h1 id="workspaceTitle">Binary buffer</h1></div><div class="view-tabs" role="tablist" aria-label="Workspace view"><button id="bufferTab" role="tab" aria-selected="true" aria-controls="bufferView">Buffer</button><button id="editorTab" role="tab" aria-selected="false" aria-controls="editorView" hidden>SRecordizer</button><button id="mapTab" role="tab" aria-selected="false" aria-controls="mapView">Memory map</button><button id="wiringTab" role="tab" aria-selected="false" aria-controls="wiringView">Wiring</button></div></div>
         <div class="read-options"><div><label for="readScope">Read selection</label><select id="readScope"><option value="custom">Custom range</option></select></div><div class="save-name"><label for="saveName">Save filename</label><input id="saveName" maxlength="100" placeholder="My_dump.bin" spellcheck="false"></div><span id="profileNote"></span></div>
         <div class="range-bar"><div><label for="addressInput">START ADDRESS</label><input id="addressInput" value="0x00000000" spellcheck="false"></div><span class="range-arrow">→</span><div><label for="lengthInput">READ / ERASE LENGTH</label><input id="lengthInput" value="0x8000" spellcheck="false"></div><button id="regionRange" data-icon="expand">Use region</button><span id="rangeHint">32 KiB selected</span></div>
         <div id="speedOptions" class="speed-options" hidden><div><label for="writeMode">SPC560B64L3 WRITE / ERASE</label><select id="writeMode"><option value="speed" selected>Speed · no backup or verification</option><option value="standard">Standard · backup, preserve and verify</option></select></div><p class="field-note">Speed replaces complete erase blocks, skips FF units and checks controller status. No backup, blank check or automatic read-back. Verify remains available separately.</p></div>
@@ -76,6 +76,32 @@
           <div id="dropZone" class="buffer-body"><div id="emptyBuffer" class="empty-buffer"><div class="empty-icon" data-icon="file"></div><h3>Your next flash starts here.</h3><p>Drop a binary or S-record into the buffer.<br>Or read flash from the connected target.</p><div><button id="emptyOpen" class="primary" data-icon="folder">Open image</button></div><small>.bin · .s19 · .srec · up to 16 MiB decoded</small></div><div id="hexScroll" tabindex="0" role="region" aria-label="Scrollable hex and ASCII dump" hidden><div id="hexCanvas"><pre id="hexRows" aria-label="Binary hex preview"></pre></div></div></div>
           <div class="buffer-footer"><span id="bufferPosition">0 bytes in buffer</span><form id="jumpForm" class="offset-controls"><label id="jumpLabel" for="jumpOffset">Go to offset</label><input id="jumpOffset" placeholder="0x00000000" aria-label="File offset, decimal or hexadecimal" spellcheck="false"><button id="jumpButton" type="submit" disabled>Go</button></form><span class="read-only" data-icon="lock">Read-only preview</span></div>
           <div class="checksum"><span>SHA-256</span><code id="checksumValue">Load an image to calculate its checksum</code></div>
+        </div>
+        <div id="editorView" role="tabpanel" aria-labelledby="editorTab" hidden>
+          <div class="editor-heading"><div><h3>Dump editor</h3><p id="edSummary">Open an image or read a dump to inspect its contents.</p></div><span id="edRevision" class="tiny-badge">ORIGINAL</span></div>
+          <div class="editor-toolbar"><button id="edScan">Scan image</button><button id="edUndo">Undo</button><button id="edRedo">Redo</button><span class="toolbar-spacer"></span><button id="edExportSrec">Export S19</button><button id="edExportBin">Export BIN</button><button id="edWrite" class="primary">Review Write</button></div>
+          <div id="edSegmentRow" class="editor-segment" hidden><label for="edSegment">Segment for Write / BIN export</label><select id="edSegment"></select><span>Each segment keeps its original physical address.</span></div>
+          <p id="edMessage" class="editor-message" role="status">Changes create a new image in this workspace. Save or review Write when ready.</p>
+          <div class="editor-filters"><label>Section<select id="edSection"><option value="tesla">Tesla parameters</option><option value="vcsec">VCSEC journal</option><option value="spc56">SPC56 text</option><option value="bytes">HEX / ASCII</option></select></label><label class="editor-filter">Filter<input id="edFilter" placeholder="Name, ID, address or value" spellcheck="false"></label><label class="editor-check"><input id="edCurrent" type="checkbox" checked>Current VCSEC only</label><label class="editor-check"><input id="edForceTesla" type="checkbox">Scan byte candidates</label><button id="edCatalog">Import names</button><input id="edCatalogInput" type="file" accept=".json,application/json" hidden></div>
+          <p id="edNotes" class="editor-notes"></p>
+          <div id="edStructured" class="editor-grid">
+            <div class="editor-list"><table><thead><tr><th>Address / ID</th><th>Parameter</th><th>State</th></tr></thead><tbody id="edRows"></tbody></table><p id="edEmpty" class="editor-empty">No recognized records. Use HEX / ASCII to inspect other data.</p></div>
+            <div class="editor-detail"><div id="edNoSelection" class="editor-empty">Select a record to inspect or edit.</div><div id="edInspector" hidden>
+              <h4 id="edName"></h4><p id="edDetail"></p><dl id="edFacts" class="editor-facts"></dl>
+              <label for="edValueFormat">Value format</label><select id="edValueFormat"><option value="hex">HEX</option><option value="ascii">ASCII</option></select>
+              <label for="edValue">Value</label><textarea id="edValue" rows="8" spellcheck="false" aria-label="Selected parameter value"></textarea>
+              <p id="edValueHint" class="field-note"></p><button id="edApply" class="primary">Apply value to image</button>
+              <div id="edVinTools" class="editor-extra" hidden><label for="edVin">VIN · 17 characters</label><input id="edVin" maxlength="17" spellcheck="false"><button id="edApplyVin">Update selected VIN</button></div>
+              <div id="edKeyTools" class="editor-extra" hidden><label for="edKeySlot">Key slot</label><select id="edKeySlot"></select><label for="edKey">Public key · 65 bytes HEX</label><textarea id="edKey" rows="4" spellcheck="false"></textarea><div class="editor-actions"><button id="edSetKey">Update slot</button><button id="edClearKey">Clear slot</button></div></div>
+              <div id="edCertificateTools" class="editor-extra" hidden><p id="edCertificateInfo"></p><p class="field-note">Editing certificate data does not create a new cryptographic signature.</p><div class="editor-actions"><button id="edCertificateExport">Export certificate blob</button><button id="edCertificateImport">Import certificate blob</button><input id="edCertificateInput" type="file" accept=".bin,application/octet-stream" hidden></div></div>
+            </div></div>
+          </div>
+          <div id="edBytes" class="editor-bytes" hidden>
+            <div class="editor-actions"><label>Physical address<input id="edAddress" placeholder="0x00800000" spellcheck="false"></label><label>Bytes<input id="edLength" type="number" min="1" max="65536" value="32"></label><button id="edReadBytes">Load bytes</button><label>Format<select id="edBytesFormat"><option value="hex">HEX</option><option value="ascii">ASCII</option></select></label></div>
+            <label for="edBytesValue">Bytes at the selected address</label><textarea id="edBytesValue" rows="8" spellcheck="false"></textarea><button id="edApplyBytes" class="primary">Apply bytes to image</button>
+            <div class="editor-search"><label>Find<input id="edFind" placeholder="HEX bytes or ASCII text" spellcheck="false"></label><button id="edSearch">Find</button><label>Replace with<input id="edReplace" placeholder="Same byte length" spellcheck="false"></label><button id="edReplaceAll">Replace all</button></div><p id="edHits" class="editor-notes"></p>
+            <p class="field-note">Addresses follow the S-record map. For BIN, the start address above maps file offset zero. Raw byte edits do not repair internal firmware checksums; structured edits recalculate their supported checksums.</p>
+          </div>
         </div>
         <div id="mapView" role="tabpanel" aria-labelledby="mapTab" hidden><div class="view-intro"><h3>Flash block layout</h3><p>Select a block to use its exact erase range.</p></div><div id="blockGrid"></div></div>
         <div id="wiringView" role="tabpanel" aria-labelledby="wiringTab" hidden>

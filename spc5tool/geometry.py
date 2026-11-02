@@ -77,6 +77,19 @@ def blocks_for(chip):
             Block("CFLASH_OTP", "CFLASH_OTP", 0x400000, 0x2000, 0xC3F88000, 0, 1 << 20, "otp"),
             Block("DFLASH_OTP", "DFLASH_OTP", 0xC00000, 0x2000, 0xC3F8C000, 0, 1 << 20, "otp"),
         ))
+    elif chip.key == "spc5668g" and chip.algorithm == "c90-fl":
+        # MPC5668xRM Rev. 4 Table 11-1. LSL[9:0], MSL[1:0], HSL[5:0].
+        base = 0xFFFF8000
+        for i in range(10):
+            address, size = (i * 0x4000, 0x4000) if i < 8 else (0x20000 + (i - 8) * 0x10000, 0x10000)
+            blocks.append(Block(f"CFLASH.L{i}", "CFLASH", address, size, base, 0, 1 << i))
+        for i in range(2):
+            blocks.append(Block(f"CFLASH.M{i}", "CFLASH", 0x40000 + i * 0x20000,
+                                0x20000, base, 0, 1 << (16 + i)))
+        for i in range(6):
+            blocks.append(Block(f"CFLASH.H{i}", "CFLASH", 0x80000 + i * 0x40000,
+                                0x40000, base, 1, 1 << i))
+        blocks.append(Block("SHADOW", "SHADOW", 0xFFC000, 0x4000, base, 0, 1 << 20, "shadow"))
     elif chip.key == "spc5748g":
         small = [(0xF90000 + i * 0x4000, 0x4000, i) for i in range(8)]
         small += [(0xFB0000, 0x8000, 8), (0xFB8000, 0x8000, 9)]

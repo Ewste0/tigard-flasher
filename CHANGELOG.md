@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.9.0 — 2026-11-02
+
+- Add SPC5668G/MPC5668G: 2 MiB CFLASH and 16 KiB SHADOW, physical Nexus memory
+  access, both-core halt and revision-masked IDCODE checks. Group ordinary erase
+  blocks and program aligned 16-byte pages with 8-byte fallback. Preserve the
+  SHADOW configuration tail and validate its single censorship word.
+- Keep SPC5668 serial-boot passwords separate from JTAG: no unsupported login,
+  password installation, DFLASH or OTP map is exposed. Offline validation only.
+- Add a SRecordizer panel for SPC560B64L3/SPC5668G: Tesla and VCSEC records,
+  SPC56 text, HEX/ASCII, search/replace, key slots and certificate blobs.
+  Include VIN editing for VCSEC 0033 while preserving its four trailing bytes.
+- Create immutable edited images with Undo/Redo, supported CRC repair, lossless
+  S-record output and selected-segment BIN export. Preserve physical addresses,
+  invalidate stale Write reviews and bind edits to their MCU/address.
+- Accept .mhx S-records and optional locally imported parameter names. Keep
+  proprietary catalogs, algorithms and customer dumps out of distributions.
+- Add wire/controller, parser, HTTP and browser tests using synthetic fixtures.
+
 ## 0.8.0 — 2026-10-26
 
 - Add SPC560B64L3 Speed Write/Erase for complete CFLASH/DFLASH erase blocks,

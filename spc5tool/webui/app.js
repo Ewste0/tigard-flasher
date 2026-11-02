@@ -74,6 +74,9 @@ function log(text, level = "INFO", timestamp = Date.now()) {
   $("logCount").textContent = `${++eventCount} events`;
 }
 function controls() {
+  $("editorTab").hidden = !target?.editor;
+  if (!target?.editor && $("editorTab").getAttribute("aria-selected") === "true") tab("buffer");
+  window.SRecordizer?.sync();
   $("speedOptions").hidden = !speedAvailable();
   $("writeMode").disabled = !ready || busy;
   $("operationPolicy").textContent = speedAvailable() && $("writeMode").value === "speed"
@@ -92,6 +95,7 @@ function controls() {
   }
   for (const id of ["openButton", "emptyOpen", "identifyButton", "settingsButton", "familySelect", "chipSelect", "addressInput", "lengthInput", "regionRange", "readScope", "saveName", "currentPassword", "newPassword", "confirmPassword", "passwordSlot"]) $(id).disabled = !ready || busy;
   $("currentPassword").disabled = !ready || busy || !target?.password_login;
+  for (const id of ["newPassword", "confirmPassword", "passwordSlot"]) $(id).disabled = !ready || busy || !target?.password_install;
   for (const input of document.querySelectorAll(".region-option input, .block-card")) input.disabled = busy;
   $("saveButton").disabled = !file || busy;
   $("jumpButton").disabled = !viewBytes;
@@ -111,13 +115,16 @@ function setTarget() {
   target = targets.find(t => t.key === $("chipSelect").value);
   for (const id of ["currentPassword", "newPassword", "confirmPassword"]) $(id).value = "";
   $("securityPanel").hidden = target.protocol !== "JTAG";
-  $("passwordLength").textContent = target.password_bits ? `${target.password_bits / 4} hex digits` : "";
+  $("passwordLength").textContent = !target.password_login && !target.password_install ? "Unavailable" : target.password_bits ? `${target.password_bits / 4} hex digits` : "";
+  $("securityPanel").querySelector("details").hidden = !target.password_install;
   for (const id of ["currentPassword", "newPassword", "confirmPassword"]) {
     $(id).maxLength = target.password_bits / 4 || 64;
     $(id).placeholder = `${target.password_bits / 4 || 64} hexadecimal digits`;
   }
   $("passwordSlot").replaceChildren(new Option("JTAG", "jtag"), ...(target.password_bits === 256 ? [0,1,2,3].map(n => new Option(`PASS group ${n}`, `group${n}`)) : []));
-  $("passwordNote").textContent = !target.password_login
+  $("passwordNote").textContent = !target.password_login && !target.password_install
+    ? "This profile has no JTAG password operation. SPC5668 uses a separate serial-boot password; normal debug requires an uncensored target."
+    : !target.password_login
     ? "Password storage is supported; JTAG login is not yet supported for this device. Installing a password does not enable protection."
     : target.password_bits === 256
       ? "64 hex digits, in flash-address order. Power-cycle after installation. Customer Delivery checks the installed password while halted under reset. Protected-target entry may run firmware briefly before halt; unlocking awaits bench validation."
@@ -183,14 +190,15 @@ function updateRange() {
   catch { $("rangeHint").textContent = "Enter a valid range"; }
 }
 function tab(name) {
-  for (const key of ["buffer", "map", "wiring"]) {
+  for (const key of ["buffer", "editor", "map", "wiring"]) {
     $(key + "Tab").setAttribute("aria-selected", String(key === name));
     $(key + "Tab").tabIndex = key === name ? 0 : -1;
     $(key + "View").hidden = key !== name;
   }
-  $("workspaceTitle").textContent = {buffer:"Binary buffer", map:"Memory map", wiring:"Connection guide"}[name];
+  $("workspaceTitle").textContent = {buffer:"Binary buffer", editor:"SRecordizer", map:"Memory map", wiring:"Connection guide"}[name];
   if (name === "map") renderMap();
   if (name === "buffer" && viewBytes) requestAnimationFrame(preview);
+  if (name === "editor") window.SRecordizer?.open();
 }
 function renderMap() {
   let blocks = target.blocks;
@@ -244,7 +252,7 @@ function renderWiring() {
   const labels = guide.spi ? ["CS", "VTGT", "CIPO", "EN", "WP", "SCK", "GND", "COPI"] : ["VTGT", "GND", "TCK", "TDI", "TDO", "TMS", "TRST", "SRST"];
   $("adapterPins").replaceChildren(...labels.map((label, i) => pinButton(i + 1, label, guide.rows.find(row => row.adapterPin === i + 1))));
   $("connectorTitle").textContent = guide.title;
-  $("connectorSubtitle").textContent = guide.mpc ? "Connector reference · 2 × 7" : guide.mini ? "Connector reference · 2 × 5" : "SOIC-8 reference · match package pin 1";
+  $("connectorSubtitle").textContent = guide.mpc ? "Connector reference · 2 × 7" : guide.mini ? "Connector reference · 2 × 5" : guide.spi ? "SOIC-8 reference · match package pin 1" : "Target signal names · locate them on your board";
   $("connectorOrientation").textContent = guide.orientation;
   $("connectorReference").hidden = !guide.reference;
   if (guide.reference) {
@@ -262,8 +270,8 @@ function renderWiring() {
   }));
   $("selectedWire").textContent = "Select a signal to highlight both ends of its connection.";
   $("wiringNote").textContent = guide.spi ? "Set the mode switch to JTAG/SPI. Match the flash supply voltage. Keep WP# and HOLD#/RESET# inactive; Tigard’s SPI header provides pull-ups on WP and EN. For a separately powered target, select VTGT."
-    : `Set the mode switch to JTAG/SPI. For a separately powered target, select VTGT and connect the target’s debug I/O reference. ${guide.mpc ? `This session pulses ${guide.resetLead} → pin 9 RESET low and holds ${guide.jcompLead} → pin 14 JCOMP HIGH. JCOMP enables JTAG; it is separate from MCU reset.` : `This session uses ${guide.resetLead} for active-low functional reset. Locate the correct reset signal in the board schematic.`}`;
-  $("packageNote").textContent = `Colors link signals in this guide; wire colors may differ. ${guide.mpc ? "Pins 7, 8 and 13 are unused in this connector reference. Confirm connector orientation before connecting." : guide.spi ? "This drawing applies to the 8-pin package; verify other package variants separately." : "Pin 7 is NC. Pin 9 is JTAG_MOD / NC* in this connector reference: leave unconnected unless your board documentation requires it. It is not assigned to JCOMP here."} Opening this guide does not access USB.`;
+    : `Set the mode switch to JTAG/SPI. For a separately powered target, select VTGT and connect the target’s debug I/O reference. ${guide.mpc ? `This session pulses ${guide.resetLead} → pin 9 RESET low and holds ${guide.jcompLead} → pin 14 JCOMP HIGH. JCOMP enables JTAG; it is separate from MCU reset.` : `This session uses ${guide.resetLead} for active-low functional reset. ${guide.hasJcomp ? `${guide.jcompLead} drives JCOMP HIGH to enable JTAG. ` : ""}Locate the correct signals in the board schematic.`}`;
+  $("packageNote").textContent = `Colors link signals in this guide; wire colors may differ. ${guide.mpc ? "Pins 7, 8 and 13 are unused in this connector reference. Confirm connector orientation before connecting." : guide.spi ? "This drawing applies to the 8-pin package; verify other package variants separately." : guide.mini ? "Pin 7 is NC. Pin 9 is JTAG_MOD / NC* in this connector reference: leave unconnected unless your board documentation requires it. It is not assigned to JCOMP here." : "Use your board schematic for the connector pin numbers. No 10-pin or 14-pin layout is assumed for this target."} Opening this guide does not access USB.`;
 }
 $("wiringView").addEventListener("click", event => {
   const item = event.target.closest("[data-wire]"); if (item) selectWire(item.dataset.wire);
@@ -272,6 +280,11 @@ async function loadFile(info, segmentIndex = 0) {
   file = info;
   imageSegment = segmentIndex;
   const segment = info.segments?.[segmentIndex];
+  if (!segment && info.editor_base !== undefined) {
+    $("addressInput").value = hex(info.editor_base);
+    $("lengthInput").value = hex(info.size);
+    updateRange();
+  }
   viewBase = segment?.address || 0;
   $("imageSegmentRow").hidden = !segment;
   $("imageSegment").replaceChildren(...(info.segments || []).map((s, i) => new Option(`${i + 1} · ${hex(s.address)}–${hex(s.address + s.size - 1)} · ${sizeText(s.size)}`, String(i), false, i === segmentIndex)));
@@ -576,11 +589,11 @@ $("familySelect").addEventListener("change", setFamily); $("chipSelect").addEven
 $("regionRange").addEventListener("click", () => { $("addressInput").value = hex(region.base); $("lengthInput").value = hex(region.size); updateRange(); });
 $("lengthInput").addEventListener("input", updateRange);
 $("addressInput").addEventListener("input", updateRange);
-for (const name of ["buffer", "map", "wiring"]) $(name + "Tab").addEventListener("click", () => tab(name));
+for (const name of ["buffer", "editor", "map", "wiring"]) $(name + "Tab").addEventListener("click", () => tab(name));
 document.querySelector('[role="tablist"]').addEventListener("keydown", event => {
   if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
-  event.preventDefault(); const names = ["buffer", "map", "wiring"]; let index = names.findIndex(name => $(name + "Tab").getAttribute("aria-selected") === "true");
-  index = event.key === "Home" ? 0 : event.key === "End" ? 2 : (index + (event.key === "ArrowRight" ? 1 : 2)) % 3;
+  event.preventDefault(); const names = ["buffer", "editor", "map", "wiring"].filter(name => !$(name + "Tab").hidden); let index = names.findIndex(name => $(name + "Tab").getAttribute("aria-selected") === "true");
+  index = event.key === "Home" ? 0 : event.key === "End" ? names.length - 1 : (index + (event.key === "ArrowRight" ? 1 : names.length - 1)) % names.length;
   tab(names[index]); $(names[index] + "Tab").focus();
 });
 $("wiringButton").addEventListener("click", () => tab("wiring"));

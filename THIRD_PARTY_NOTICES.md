@@ -24,3 +24,11 @@ source links. These binaries are not included in the Python wheel or Git tree.
 
 No proprietary flasher executable, programming algorithm binary, PCP file,
 customer firmware, adapter serial number, or hardware dump is distributed.
+
+The SRecordizer panel is an independent Python/JavaScript implementation of
+formats and workflows examined in a user-supplied SRecordizerMac Swift project:
+Tesla CRC8 records, VCSEC journal CRC32, SPC56 text blocks and Motorola S-records.
+The supplied Swift sources, Windows executable, extracted parameter dictionary,
+certificates and example dumps are not distributed. Optional names are imported
+by the user into local workspace storage. The name identifies the source workflow;
+this project does not claim affiliation or cryptographic signing capabilities.

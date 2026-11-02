@@ -15,7 +15,8 @@ class SimMemory(WordMemory):
         self.fast_read_fallback = False
         self.regions = {r.base: bytearray(b"\xff" * r.size) for r in chip.regions}
         self.c55 = chip.algorithm.startswith("c55")
-        bases = (chip.flash_ctrl["FMC"],) if self.c55 else (0xC3F88000, 0xC3F8C000)
+        bases = (chip.flash_ctrl["FMC"],) if self.c55 else (
+            (0xFFFF8000,) if chip.algorithm == "c90-fl" else (0xC3F88000, 0xC3F8C000))
         self.controllers = {b: {"mcr": 0x600, "pending": {}, "interlock": None,
                                 "regs": {}, "keys": set()} for b in bases}
         self.log = []
@@ -40,6 +41,18 @@ class SimMemory(WordMemory):
             entries += [(0xFE0000, 0x10000, 22), (0xFF0000, 0x10000, 24)]
             self.blocks += [(a, s, 0xFFFE0000, 0x38, bit) for a, s, bit in entries]
             self.blocks += [(0x1000000 + n * 0x40000, 0x40000, 0xFFFE0000, 0x40, n) for n in range(22)]
+        elif chip.algorithm == "c90-fl":
+            # Independent MPC5668xRM Table 11-1 boundaries; physical map.
+            starts = (0, 0x4000, 0x8000, 0xC000, 0x10000, 0x14000,
+                      0x18000, 0x1C000, 0x20000, 0x30000, 0x40000)
+            self.blocks += [(a, b - a, 0xFFFF8000, 0x10, n)
+                            for n, (a, b) in enumerate(zip(starts, starts[1:]))]
+            self.blocks += [(0x40000, 0x20000, 0xFFFF8000, 0x10, 16),
+                            (0x60000, 0x20000, 0xFFFF8000, 0x10, 17)]
+            self.blocks += [(0x80000 + n * 0x40000, 0x40000, 0xFFFF8000, 0x14, n)
+                            for n in range(6)]
+            self.blocks += [(0xFFC000, 0x4000, 0xFFFF8000, 0x10, 20)]
+            self.regions[0xFFC000][0x3DD8:0x3DE8] = bytes.fromhex('FEEDFACECAFEBEEF55AA55AA12345678')
         else:
             starts = (0, 0x8000, 0xC000, 0x10000, 0x18000, 0x20000, 0x40000, 0x60000, 0x80000)
             self.blocks += [(a, b - a, 0xC3F88000, 0x10, (n if n < 6 else n + 10))
@@ -116,10 +129,11 @@ class SimMemory(WordMemory):
                 elif not self.c55 and offset == 0x10:
                     # MPC5607B RM fig30-10: LMS has low/mid selects only.
                     # TSLK bit20 belongs to LML/SLL, not to this register.
-                    value &= 0x0003003F if base == 0xC3F88000 else 0xF
+                    value &= {0xC3F88000: 0x0003003F, 0xC3F8C000: 0xF,
+                              0xFFFF8000: 0x000303FF}[base]
                 elif not self.c55 and offset == 0x14:
                     value &= {'spc560b54': 0x3, 'spc560b60': 0xF,
-                              'spc560b64': 0xFF}[self.chip.key]
+                              'spc560b64': 0xFF, 'spc5668g': 0x3F}[self.chip.key]
                 c["regs"][offset] = value
                 return
         block = next((b for b in self.blocks if b[0] <= address < b[0] + b[1]), None)
@@ -154,8 +168,9 @@ class SimMemory(WordMemory):
                 if not self.c55:
                     # RM30.6.3: SHADOW selection is the interlock address;
                     # LMS/HBS cannot select it, and are ignored in shadow mode.
-                    shadow = 0x200000 <= c['interlock'] < 0x204000
-                    if a == 0x200000:
+                    shadow_base = 0xFFC000 if self.chip.algorithm == 'c90-fl' else 0x200000
+                    shadow = shadow_base <= c['interlock'] < shadow_base + 0x4000
+                    if a == shadow_base:
                         selected = shadow
                     elif shadow:
                         selected = False
@@ -168,6 +183,8 @@ class SimMemory(WordMemory):
             address = c["interlock"]
             block = next(b for b in self.blocks if b[0] <= address < b[0] + b[1])
             unit = 16 if self.chip.algorithm == 'c55-spc58h' else 8
+            if self.chip.algorithm == 'c90-fl' and address % 16 == 0 and len(c['pending']) == 4:
+                unit = 16
             if (self.chip.key == 'spc5748g' and 0xF90000 <= address < 0x1580000
                     and address % 128 == 0 and len(c["pending"]) == 32):
                 unit = 128

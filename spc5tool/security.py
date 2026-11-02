@@ -71,10 +71,17 @@ def validate_c90_password(data):
         raise ValueError("SPC560 password: each 16-bit halfword must contain both a zero and a one")
 
 
-def validate_shadow(data):
+def validate_shadow(data, chip=None):
     if len(data) != 0x4000:
         raise ValueError("SHADOW validation needs the complete 16 KiB sector")
     a = int.from_bytes(data[0x3DE0:0x3DE4], "big")
+    if chip is not None and chip.algorithm == "c90-fl":
+        # MPC5668xRM Table 8-2/Table 11-1: ONE word, CW in its high half.
+        # +0x3DE4 is general data, not the SPC560 duplicate censorship word.
+        # Serial boot access is not a substitute for preserving normal JTAG.
+        if a >> 16 != 0x55AA:
+            raise ValueError("MPC5668 SHADOW censorship control must remain 0x55AA; this image would disable normal debug access")
+        return
     b = int.from_bytes(data[0x3DE4:0x3DE8], "big")
     serial_control, censorship_control = a >> 16, a & 0xFFFF
     # RM0037, Table 15 / Figures 10–11: equal words with CW=0x55AA
@@ -87,6 +94,8 @@ def validate_shadow(data):
 
 
 def password_address(chip, slot="jtag"):
+    if chip.algorithm == "c90-fl":
+        raise ValueError("MPC5668 has a serial-boot password; JTAG password provisioning is not supported")
     if chip.algorithm == "c90-b":
         if slot != "jtag":
             raise ValueError("SPC560 has one censorship password, no PASS groups")

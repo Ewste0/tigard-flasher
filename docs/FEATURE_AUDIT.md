@@ -1,5 +1,9 @@
 # MCU, OTP and PROGPPCNEXUS audit
 
+Version 0.9.0 adds a seventh MCU profile, [SPC5668G](SPC5668.md), and the
+[SRecordizer editor/export panel](SRECORDIZER.md). The comparison below records
+the earlier 0.7.6 audit; it is not the current editor feature list.
+
 Reviewed 2026-10-25 for version 0.7.6, with the 0.7.7 grouped-erase follow-up in
 [VALIDATION.md](VALIDATION.md). Scope: all six shipped MCU profiles,
 their mapped regions, controller operations, security paths, transport failures,

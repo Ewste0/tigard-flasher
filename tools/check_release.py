@@ -89,6 +89,7 @@ def check_archive(path):
         if path.suffix == ".whl" and (name.startswith("tests/") or name == "spc5tool/simulator.py"):
             raise ValueError(f"Test-only device model shipped in wheel: {name}")
     required = ["spc5tool/webui/index.html", "spc5tool/webui/wiring.js",
+                "spc5tool/webui/editor.js", "spc5tool/editor.py", "spc5tool/srecordizer.py",
                 "spc5tool/webui/assets/tigard-render.png", "spc5tool/webui/assets/jtag-14pin.svg",
                 "spc5tool/webui/assets/spc560-10pin.svg", "spc5tool/webui/assets/TIGARD-LICENSE.txt"]
     for suffix in required + ["LICENSE", "THIRD_PARTY_NOTICES.md"]:
